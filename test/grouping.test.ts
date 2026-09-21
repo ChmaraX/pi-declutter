@@ -52,7 +52,7 @@ test("sequential tool-only turns stay one group (no text/thinking between)", () 
 	g.addCall("bash");
 	g.addCall("read");
 	g.addCall("grep");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["read", "bash", "read", "grep"]);
 });
@@ -65,7 +65,7 @@ test("empty/whitespace-only text block does NOT break the group", () => {
 	g.textDelta("\n\t");
 	g.textEnd("   \n\t");
 	g.addCall("bash");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["read", "bash"]);
 });
@@ -76,7 +76,7 @@ test("first non-whitespace text_delta breaks the group", () => {
 	g.textStart();
 	g.textDelta("Now let me check");
 	g.addCall("bash");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 	assert.deepEqual(groupCalls(entries[1]), ["bash"]);
@@ -91,22 +91,24 @@ test("leading whitespace delta then content still breaks exactly once", () => {
 	g.textDelta(" world"); // already broke this block: no second break
 	g.addCall("bash");
 	g.addCall("grep");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 	assert.deepEqual(groupCalls(entries[1]), ["bash", "grep"]);
 });
 
-test("text_end with content breaks even when no delta carried it", () => {
+test("text_end with content breaks even when no delta carried it, and records a narration entry (ticket 41)", () => {
 	const g = grouper();
 	g.addCall("read");
 	g.textStart();
 	g.textEnd("All done."); // provider delivered whole block in text_end
 	g.addCall("bash");
-	const entries = g.finalize();
-	assert.equal(entries.length, 2);
+	const { entries } = g.finalize();
+	assert.equal(entries.length, 3);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
-	assert.deepEqual(groupCalls(entries[1]), ["bash"]);
+	assert.equal(entries[1].kind, "narration");
+	assert.equal(entries[1].kind === "narration" ? entries[1].text : undefined, "All done.");
+	assert.deepEqual(groupCalls(entries[2]), ["bash"]);
 });
 
 test("a leading text block before any tool does not create an empty group", () => {
@@ -114,7 +116,7 @@ test("a leading text block before any tool does not create an empty group", () =
 	g.textStart();
 	g.textDelta("Sure, let me look."); // break on empty open group → no-op
 	g.addCall("read");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 });
@@ -127,7 +129,7 @@ test("think → cmd → think → cmd is four ordered entries in event order", (
 	g.addCall("bash"); // resolves the leading thought, then opens a group
 	g.addThought(2000, "checking output");
 	g.addCall("make"); // resolves the 2nd thought, opens a new group
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 4);
 	assert.equal(thoughtMs(entries[0]), 4000);
 	assert.deepEqual(groupCalls(entries[1]), ["bash"]);
@@ -140,7 +142,7 @@ test("leading meaningful thinking is the first entry, before the first group", (
 	g.addThought(1500, "planning");
 	g.addCall("read");
 	g.addCall("grep");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 2);
 	assert.equal(entries[0].kind, "thought");
 	assert.equal(thoughtMs(entries[0]), 1500);
@@ -154,7 +156,7 @@ test("consecutive thinking spans coalesce into ONE thought entry (summed ms)", (
 	g.addThought(600, "first burst");
 	g.addThought(700, "second burst\nlast summary");
 	g.addCall("bash");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 3);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 	assert.equal(entries[1].kind, "thought");
@@ -167,7 +169,7 @@ test("sub-threshold thinking between two tools is ignored: the group stays whole
 	g.addCall("bash");
 	g.addThought(500, "tiny bursty span"); // < 1s → ignored, does not break
 	g.addCall("make");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	// One fat group; no thought entry, no split (protects against bursty spans).
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["bash", "make"]);
@@ -180,7 +182,7 @@ test("many bursty sub-second spans between tools still coalesce past the thresho
 	g.addThought(400, "b");
 	g.addThought(400, "c"); // 1200 total ≥ 1s → meaningful, closes the group
 	g.addCall("bash");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 3);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 	assert.equal(thoughtMs(entries[1]), 1200);
@@ -193,7 +195,7 @@ test("meaningful thinking then visible text: one thought entry, no empty trailin
 	g.addThought(2000, "reasoning before answering");
 	g.textStart();
 	g.textDelta("Here is the answer.");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	// Group (read) closes, thought entry lands, then the text break closes nothing.
 	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
@@ -204,7 +206,7 @@ test("trailing meaningful thinking after the last tool is emitted at finalize", 
 	const g = grouper();
 	g.addCall("bash");
 	g.addThought(1500, "wrapping up");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["bash"]);
 	assert.equal(thoughtMs(entries[1]), 1500);
@@ -214,7 +216,7 @@ test("trailing sub-threshold thinking after the last tool is dropped", () => {
 	const g = grouper();
 	g.addCall("bash");
 	g.addThought(300, "blip");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["bash"]);
 });
@@ -224,7 +226,7 @@ test("zero/negative-duration spans are dropped and never contribute", () => {
 	g.addThought(0, "dropped");
 	g.addThought(-5, "dropped");
 	g.addCall("read");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 1);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 });
@@ -319,9 +321,9 @@ test("shouldTick is true while tools run OR a thinking span is active, false oth
 test("finalize is idempotent after reset (duplicate settle is a no-op)", () => {
 	const g = grouper();
 	g.addCall("read");
-	assert.equal(g.finalize().length, 1);
+	assert.equal(g.finalize().entries.length, 1);
 	g.reset();
-	assert.equal(g.finalize().length, 0);
+	assert.equal(g.finalize().entries.length, 0);
 });
 
 test("force-settle transition: an open group + a flushed open thinking span finalize in order (ticket 32)", () => {
@@ -335,9 +337,107 @@ test("force-settle transition: an open group + a flushed open thinking span fina
 	// The stream died mid-thinking: no thinking_end fired, so the extension flushes
 	// the in-progress span here (elapsed 3s, partial streamed text preserved).
 	g.addThought(3000, "**Inspecting events controller and queue setup**");
-	const entries = g.finalize();
+	const { entries } = g.finalize();
 	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["grep", "grep"]);
 	assert.equal(entries[1].kind, "thought");
 	assert.equal(thoughtMs(entries[1]), 3000);
+});
+
+// ── Narration entries + finalAnswer popping (ticket 41) ─────────────────────────
+// An intermediate assistant text block folds into the card as a "narration" entry
+// in its chronological spot; the TRUE final answer (nothing follows it) is popped
+// out of the sequence by finalize() and returned separately, never as a card row.
+
+test("a narration block mid-response sits between the groups it separated, in order", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("Checking the config next.");
+	g.addCall("grep");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 3);
+	assert.deepEqual(groupCalls(entries[0]), ["read"]);
+	assert.equal(entries[1].kind, "narration");
+	assert.equal(entries[1].kind === "narration" ? entries[1].text : undefined, "Checking the config next.");
+	assert.deepEqual(groupCalls(entries[2]), ["grep"]);
+	// Nothing trailing \u2014 the response ended on a group, not narration.
+	assert.equal(finalAnswer, undefined);
+});
+
+test("a trailing text block with nothing after it is popped out as finalAnswer, not a card row", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("Here is the summary you asked for.");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 1); // only the group; the narration was popped
+	assert.deepEqual(groupCalls(entries[0]), ["read"]);
+	assert.equal(finalAnswer, "Here is the summary you asked for.");
+});
+
+test("a plain text-only response (no tools) has no card entries; the whole answer is finalAnswer", () => {
+	const g = grouper();
+	g.textStart();
+	g.textEnd("Paris is the capital of France.");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 0);
+	assert.equal(finalAnswer, "Paris is the capital of France.");
+});
+
+test("two text blocks back to back with nothing between them: only the LAST is popped", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("First paragraph, narration.");
+	g.textStart();
+	g.textEnd("Second paragraph, the real answer.");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 2);
+	assert.deepEqual(groupCalls(entries[0]), ["read"]);
+	assert.equal(entries[1].kind, "narration");
+	assert.equal(entries[1].kind === "narration" ? entries[1].text : undefined, "First paragraph, narration.");
+	assert.equal(finalAnswer, "Second paragraph, the real answer.");
+});
+
+test("a response with no text at all has no narration entries and no finalAnswer (regression guard)", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.addCall("bash");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 1);
+	assert.deepEqual(groupCalls(entries[0]), ["read", "bash"]);
+	assert.equal(finalAnswer, undefined);
+});
+
+test("a whitespace-only trailing text block records nothing and is not popped as finalAnswer", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("   \n\t ");
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 1);
+	assert.equal(finalAnswer, undefined);
+});
+
+test("a narration entry appears in snapshot immediately (live), not withheld until settle", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("Reading config now.");
+	const snap = g.snapshot();
+	assert.equal(snap.length, 2);
+	assert.deepEqual(groupCalls(snap[0]), ["read"]);
+	assert.equal(snap[1].kind, "narration");
+});
+
+test("reset() discards a pending narration entry along with everything else", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("Some narration.");
+	g.reset();
+	const { entries, finalAnswer } = g.finalize();
+	assert.equal(entries.length, 0);
+	assert.equal(finalAnswer, undefined);
 });

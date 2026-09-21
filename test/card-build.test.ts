@@ -128,3 +128,45 @@ test("settleAction: a group with a label but zero items still counts as renderab
 	};
 	assert.equal(settleAction(labelOnly, true), "settle-live");
 });
+
+// \u2500\u2500 Narration entries (ticket 41) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+test("buildCardEntries: a narration entry carries the full text plus a derived summary", () => {
+	const entries: Entry<ToolCall>[] = [{ kind: "narration", text: "**Checking config**\nThe file looks fine so far." }];
+	const built = buildCardEntries(entries);
+	assert.equal(built.entries.length, 1);
+	const e = built.entries[0];
+	assert.equal(e.kind, "narration");
+	if (e.kind === "narration") {
+		assert.equal(e.narration.text, "**Checking config**\nThe file looks fine so far.");
+		assert.equal(e.narration.summary, "Checking config"); // deriveThoughtSummary strips markdown emphasis
+	}
+});
+
+test("buildCardEntries: a narration entry with only symbols/no words falls back to a non-empty summary", () => {
+	const entries: Entry<ToolCall>[] = [{ kind: "narration", text: "---" }];
+	const built = buildCardEntries(entries);
+	const e = built.entries[0];
+	assert.equal(e.kind, "narration");
+	if (e.kind === "narration") assert.ok(e.narration.summary.length > 0, "never an empty row label");
+});
+
+test("buildCardEntries: narration entries do not affect failure counting or settledIds", () => {
+	const entries: Entry<ToolCall>[] = [
+		{ kind: "group", calls: [call({ toolCallId: "a", name: "bash", isError: true })] },
+		{ kind: "narration", text: "That failed, retrying differently." },
+	];
+	const built = buildCardEntries(entries);
+	assert.equal(built.failures, 1);
+	assert.deepEqual(built.settledIds, ["a"]);
+});
+
+test("settleAction: a narration-only build (no tools ran) still counts as renderable", () => {
+	const narrationOnly: CardEntryBuild = {
+		entries: [{ kind: "narration", narration: { text: "An intermediate note.", summary: "An intermediate note." } }],
+		settledIds: [],
+		failures: 0,
+	};
+	assert.equal(settleAction(narrationOnly, false), "append-settled");
+	assert.equal(settleAction(narrationOnly, true), "settle-live");
+});

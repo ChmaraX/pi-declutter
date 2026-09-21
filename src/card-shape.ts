@@ -92,7 +92,7 @@ export interface Segment {
 	tone: Tone;
 }
 
-export type LineKind = "header" | "group" | "thought" | "item" | "preview";
+export type LineKind = "header" | "group" | "thought" | "narration" | "item" | "preview";
 
 /** One rendered line: `indent` leading spaces then the concatenated segments. */
 export interface ShapeLine {
@@ -133,11 +133,18 @@ export function thoughtNodeId(k: number): string {
 	return `t${k}`;
 }
 
+/** Node id for the narration entry at top-level index `k` (ticket 41): opens its
+ * modal. The `n` prefix keeps it collision-free from group/thought ids. */
+export function narrationNodeId(k: number): string {
+	return `n${k}`;
+}
+
 /** A parsed node id: which level (and top-level entry / member index) a row is. */
 export type ParsedNode =
 	| { kind: "header" }
 	| { kind: "group"; entryIndex: number }
 	| { kind: "thought"; entryIndex: number }
+	| { kind: "narration"; entryIndex: number }
 	| { kind: "member"; entryIndex: number; itemIndex: number };
 
 /** Inverse of the *NodeId helpers. Unknown ids resolve to the header (inert). */
@@ -146,6 +153,8 @@ export function parseNodeId(id: string): ParsedNode {
 	if (member) return { kind: "member", entryIndex: Number(member[1]), itemIndex: Number(member[2]) };
 	const thought = /^t(\d+)$/.exec(id);
 	if (thought) return { kind: "thought", entryIndex: Number(thought[1]) };
+	const narration = /^n(\d+)$/.exec(id);
+	if (narration) return { kind: "narration", entryIndex: Number(narration[1]) };
 	const group = /^g(\d+)$/.exec(id);
 	if (group) return { kind: "group", entryIndex: Number(group[1]) };
 	return { kind: "header" };
@@ -240,11 +249,26 @@ export interface ShapeGroup {
 }
 
 /**
- * One top-level entry in the card's ordered flow (ticket 21): a group of
- * consecutive tool calls or a coalesced meaningful thinking run, interleaved in
- * true event order.
+ * A narration entry as the card renders it (ticket 41): an intermediate
+ * assistant text block that turned out NOT to be the final answer (something
+ * followed it), so it folds into the card in its chronological spot instead of
+ * floating in the transcript as a separate paragraph. `summary` is a truncated
+ * one-line label for the row; `text` is the full content the modal shows.
  */
-export type CardEntry = { kind: "group"; group: ShapeGroup } | { kind: "thought"; thought: ShapeThought };
+export interface ShapeNarration {
+	text: string;
+	summary: string;
+}
+
+/**
+ * One top-level entry in the card's ordered flow (ticket 21): a group of
+ * consecutive tool calls, a coalesced meaningful thinking run, or a narration
+ * text block (ticket 41), interleaved in true event order.
+ */
+export type CardEntry =
+	| { kind: "group"; group: ShapeGroup }
+	| { kind: "thought"; thought: ShapeThought }
+	| { kind: "narration"; narration: ShapeNarration };
 
 /** True when a thought entry carries an expandable "Thinking" box (captured tail). */
 export function thoughtHasBox(thought: ShapeThought): boolean {
@@ -666,7 +690,18 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 			return;
 		}
 
-		// Group entry.
+		// Narration entry (ticket 41): "\u203a <summary> \u25b8", clickable to open the full
+		// text in a modal \u2014 always openable, since a narration entry only ever exists
+		// when it captured non-whitespace text.
+		if (entry.kind === "narration") {
+			const narrationNode = narrationNodeId(k);
+			const segments: Segment[] = [seg("\u203a", "dim"), seg(` ${entry.narration.summary}`, "dim"), openableChevron()];
+			push(narrationNode, { kind: "narration", indent: 2, segments });
+			return;
+		}
+
+		// Group entry (only remaining case here \u2014 TS narrows CardEntry to "group"
+		// after the thought/narration early returns above).
 		const group = entry.group;
 		const groupNode = groupNodeId(k);
 		const running = group.items.some((item) => item.running);

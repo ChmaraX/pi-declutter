@@ -8,10 +8,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ShapeItem, ShapeThought } from "../src/card-shape.ts";
+import type { ShapeItem, ShapeNarration, ShapeThought } from "../src/card-shape.ts";
 import {
 	clampScrollTop,
 	itemModalContent,
+	narrationModalContent,
 	scrollHint,
 	thoughtModalContent,
 	visibleSlice,
@@ -25,6 +26,10 @@ function item(overrides: Partial<ShapeItem> = {}): ShapeItem {
 
 function thought(overrides: Partial<ShapeThought> = {}): ShapeThought {
 	return { ms: 0, summary: "", tail: [], ...overrides };
+}
+
+function narration(overrides: Partial<ShapeNarration> = {}): ShapeNarration {
+	return { text: "", summary: "", ...overrides };
 }
 
 // ── itemModalContent ─────────────────────────────────────────────────────────
@@ -96,6 +101,26 @@ test("a thought modal titles with the duration + summary and a Thinking caption"
 test("a thought modal with no summary omits the trailing separator", () => {
 	const content = thoughtModalContent(thought({ ms: 1200, tail: ["quick thought"] }));
 	assert.equal(content.title, "Thought 1s");
+});
+
+// \u2500\u2500 narrationModalContent (ticket 41) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+test("a narration modal titles with the summary and a Narration caption, full body + copy", () => {
+	const content = narrationModalContent(
+		narration({ text: "First line of the note.\nSecond line.", summary: "First line of the note." }),
+	);
+	assert.equal(content.caption, "Narration");
+	assert.equal(content.title, "First line of the note.");
+	assert.deepEqual(content.body, ["First line of the note.", "Second line."]);
+	assert.equal(content.copyText, "First line of the note.\nSecond line.");
+	assert.equal(content.badge, undefined);
+	assert.equal(content.full, true); // the grouper always captures the whole block
+});
+
+test("an empty narration yields an empty body", () => {
+	const content = narrationModalContent(narration({ text: "", summary: "Message" }));
+	assert.deepEqual(content.body, []);
+	assert.equal(content.copyText, "");
 });
 
 // ── scroll windowing ───────────────────────────────────────────────────────────

@@ -151,8 +151,13 @@ import {
 	spinnerFrame,
 	suppressThinkingMarkdown,
 } from "./card-shape.ts";
-import { Grouper, shouldTick } from "./grouping.ts";
-import { dumpTranscriptTree } from "./patches.ts";
+import { Grouper, hasNonWhitespace, shouldTick } from "./grouping.ts";
+import {
+	dumpTranscriptTree,
+	findAssistantMessageComponents,
+	hideMessageTextBlock,
+	type PatchTargetInstance,
+} from "./patches.ts";
 import { PatchController } from "./patch-controller.ts";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
 import { bucketCountsText } from "./labels.ts";
@@ -351,11 +356,12 @@ function toggleInSet<T>(set: Set<T>, value: T): void {
 
 /** True when every expandable node of the card is open (the all-expanded state).
  * With inline boxes gone (ticket 35), "expandable" now means only multi-member
- * group entries showing their members. */
+ * group entries showing their members \u2014 thought and narration rows (ticket 41)
+ * have no separate expand state, they just open a modal on click. */
 function isAllExpanded(model: CardModel, cv: CardView): boolean {
 	if (cv.fullCollapsed) return false;
 	return model.entries.every((entry, k) => {
-		if (entry.kind === "thought") return true;
+		if (entry.kind !== "group") return true;
 		return !groupHasMembersToggle(entry.group) || cv.membersVisible.has(k);
 	});
 }
@@ -558,6 +564,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// enough for a summary line + a 10-line tail box, negligible retention. Reset
 	// on thinking_start, flushed into the group on thinking_end.
 	let thinkingBuf = "";
+	// The most recently completed text block, captured at text_end, awaiting
+	// confirmation (ticket 41): AT MOST one at a time, since text blocks stream
+	// serially. If something follows it (a new tool call, new thinking, or another
+	// text block) it is confirmed non-final and its native rendering is hidden
+	// (folded into the card instead). If NOTHING follows before the response
+	// settles, it was the true final answer \u2014 never touched, stays visible exactly
+	// as pi always rendered it. Cleared on every confirm-or-reset boundary so a
+	// stale reference never leaks into the next response.
+	let pendingNarration: { instance: PatchTargetInstance; contentIndex: number } | undefined;
 
 	// Built-in tool rows folded into settled cards (session-lived; never cleared).
 	const absorbed: AbsorbState = new Set();
@@ -663,6 +678,27 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		thinkingBuf = "";
 		cardModel = undefined;
 		cardAppended = false;
+		// A pending narration from the PREVIOUS response is moot for a fresh one
+		// (ticket 41) \u2014 drop it without hiding (its native rendering, if it was
+		// genuinely the previous response's final answer, must stay untouched).
+		pendingNarration = undefined;
+	}
+
+	/**
+	 * Confirm any pending narration block as NON-final (ticket 41) and hide its
+	 * native rendering, folding it into the card instead. Called the moment ANY
+	 * activity is known to follow it: a new tool call, a new thinking span, or
+	 * another text block starting \u2014 each is proof the pending block was not the
+	 * last thing in the response. No-op when nothing is pending. Best-effort: a
+	 * failed hide (component gone, shape drifted) leaves the text visible natively
+	 * \u2014 the card row still exists from Grouper.textEnd either way, so nothing is
+	 * ever lost, only occasionally shown in both places.
+	 */
+	function confirmNarrationNonFinal(): void {
+		if (!pendingNarration) return;
+		const hidden = hideMessageTextBlock(pendingNarration.instance, pendingNarration.contentIndex);
+		pendingNarration = undefined;
+		if (hidden) runtime.tui?.requestRender();
 	}
 
 	/**
@@ -881,6 +917,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// Ticket 35: a thought row opens the floating "Thinking" modal instead of
 				// an inline box. Renders nothing new in the tree, so no requestRender.
 				modalController.openThoughtModal(id, node.entryIndex);
+				return;
+			case "narration":
+				// Ticket 41: a narration row opens the floating modal with its full text.
+				modalController.openNarrationModal(id, node.entryIndex);
 				return;
 			case "member":
 				// Ticket 35: a member row opens the floating output modal.
@@ -1116,7 +1156,11 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// no-op, but on an abnormal end (stream died mid-thinking) it captures the
 		// in-progress span so the interrupted card preserves its partial thought.
 		flushOpenThinking();
-		const finalEntries = grouper.finalize();
+		const { entries: finalEntries } = grouper.finalize();
+		// Whatever `pendingNarration` pointed at is now resolved either way (folded
+		// into finalEntries as a narration entry, or popped out as the final answer
+		// above) \u2014 clear it defensively; resetResponse() would anyway (ticket 41).
+		pendingNarration = undefined;
 
 		if (finalEntries.length === 0) {
 			// Defensive: a card appended on a tool-less path (unreachable today — any
@@ -1426,6 +1470,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		const ame = event.assistantMessageEvent;
 		switch (ame.type) {
 			case "thinking_start":
+				// New thinking starting is proof anything pending was not the final answer
+				// (ticket 41).
+				confirmNarrationNonFinal();
 				thinkingStartMs = Date.now();
 				thinkingBuf = "";
 				// Tick while the span streams so the live thought entry can appear at
@@ -1458,6 +1505,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				break;
 			}
 			case "text_start":
+				// A NEW text block starting is ALSO proof any pending one wasn't final
+				// (ticket 41) \u2014 two text blocks can stream back to back with nothing
+				// else between them.
+				confirmNarrationNonFinal();
 				// A text block opened, but empty/whitespace-only blocks must NOT break
 				// the group (ticket 10): defer the break until non-whitespace content
 				// actually arrives (text_delta / text_end).
@@ -1471,6 +1522,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// Break on a non-empty block even if no delta carried content (some
 				// providers deliver the whole text in text_end).
 				grouper.textEnd(ame.content);
+				// Capture the instance NOW (ticket 41) \u2014 unambiguous at this exact
+				// moment, since no later message has started yet. Held until either
+				// confirmed non-final (hidden, folded into the card) or the response
+				// settles with nothing after it (the true final answer \u2014 left alone).
+				if (hasNonWhitespace(ame.content)) {
+					const instances = findAssistantMessageComponents(runtime.tui);
+					const instance = instances[instances.length - 1];
+					if (instance) pendingNarration = { instance, contentIndex: ame.contentIndex };
+				}
 				break;
 			default:
 				break;
@@ -1479,6 +1539,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
 		captureCtx(ctx);
+		// A new tool call starting is proof anything pending wasn't the final answer
+		// (ticket 41).
+		confirmNarrationNonFinal();
 		const call: ToolCall = {
 			toolCallId: event.toolCallId,
 			name: event.toolName,

@@ -74,10 +74,26 @@ export function shouldTick(runningTools: number, thinkingActive: boolean): boole
 }
 
 /**
- * One top-level entry in the card's ordered flow (ticket 21): either a group of
- * consecutive tool calls or a coalesced run of meaningful thinking spans.
+ * One top-level entry in the card's ordered flow (ticket 21): a group of
+ * consecutive tool calls, a coalesced run of meaningful thinking spans, or a
+ * narration text block (ticket 41 \u2014 an intermediate assistant paragraph that
+ * turned out NOT to be the final answer, folded into the card in its
+ * chronological spot instead of floating in the transcript).
  */
-export type Entry<C> = { kind: "group"; calls: C[] } | { kind: "thought"; spans: ThoughtSpan[] };
+export type Entry<C> =
+	| { kind: "group"; calls: C[] }
+	| { kind: "thought"; spans: ThoughtSpan[] }
+	| { kind: "narration"; text: string };
+
+/** Result of finalize() (ticket 41): the settled entry sequence, plus the FINAL
+ * answer text when the response's last thing was a text block with nothing after
+ * it (popped out of `entries` \u2014 it renders as the normal transcript response,
+ * not a card row). Undefined when the response ended on a group/thought, or had
+ * no narration at all. */
+export interface FinalizeResult<C> {
+	entries: Entry<C>[];
+	finalAnswer?: string;
+}
 
 export class Grouper<C> {
 	private entries: Entry<C>[] = [];
@@ -123,18 +139,31 @@ export class Grouper<C> {
 		if (!this.brokeForBlock && hasNonWhitespace(delta)) this.breakOnText();
 	}
 
-	/** A text block ended: break if it had non-empty content and hasn't broken yet. */
+	/** A text block ended: break if it had non-empty content and hasn't broken yet
+	 * (unchanged), then record it as a narration entry (ticket 41) \u2014 folded into
+	 * the card in its chronological spot unless finalize() later finds it trailing
+	 * (the true final answer, popped back out). Whitespace-only blocks record
+	 * nothing, matching the existing no-break rule. */
 	textEnd(content: string): void {
 		if (!this.brokeForBlock && hasNonWhitespace(content)) this.breakOnText();
+		if (hasNonWhitespace(content)) this.entries.push({ kind: "narration", text: content.trim() });
 		this.brokeForBlock = false;
 	}
 
 	/** Close the open flow (resolve trailing thinking, close the open group) and
-	 * return the full ordered entry sequence. */
-	finalize(): Entry<C>[] {
+	 * return the full ordered entry sequence. If the trailing entry is narration
+	 * (ticket 41), pop it out and return it as `finalAnswer` \u2014 it was never
+	 * followed by anything, so it's the true final answer, not folded content. */
+	finalize(): FinalizeResult<C> {
 		this.resolvePending();
 		this.closeGroup();
-		return this.entries;
+		const last = this.entries[this.entries.length - 1];
+		if (last && last.kind === "narration") {
+			const finalAnswer = last.text;
+			this.entries = this.entries.slice(0, -1);
+			return { entries: this.entries, finalAnswer };
+		}
+		return { entries: this.entries };
 	}
 
 	/** Discard all accumulated state (start a fresh agent response). */
@@ -206,7 +235,7 @@ export class Grouper<C> {
 
 /** Deep-copy one entry so a snapshot never shares the grouper's arrays. */
 function cloneEntry<C>(entry: Entry<C>): Entry<C> {
-	return entry.kind === "thought"
-		? { kind: "thought", spans: entry.spans.map((span) => ({ ...span })) }
-		: { kind: "group", calls: [...entry.calls] };
+	if (entry.kind === "thought") return { kind: "thought", spans: entry.spans.map((span) => ({ ...span })) };
+	if (entry.kind === "narration") return { kind: "narration", text: entry.text };
+	return { kind: "group", calls: [...entry.calls] };
 }

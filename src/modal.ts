@@ -10,7 +10,7 @@
  * Kept pi-import-free so it unit-tests headlessly.
  */
 
-import type { ShapeItem, ShapeThought, Tone } from "./card-shape.ts";
+import type { ShapeItem, ShapeNarration, ShapeThought, Tone } from "./card-shape.ts";
 import { boxTail, formatDuration, formatSeconds, itemBadge } from "./card-shape.ts";
 
 /** One modal's full content: what the overlay renders and what `c` copies. */
@@ -56,6 +56,19 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 		body,
 		copyText,
 		full: fullText !== undefined && fullText.length > 0,
+	};
+}
+
+/** Compose the modal content for a narration row (ticket 41): the full text of
+ * an intermediate assistant paragraph that got folded into the card. */
+export function narrationModalContent(narration: ShapeNarration): ModalContent {
+	const body = narration.text.length > 0 ? narration.text.split("\n") : [];
+	return {
+		title: narration.summary,
+		caption: "Narration",
+		body,
+		copyText: narration.text,
+		full: true,
 	};
 }
 

@@ -172,11 +172,18 @@ interface PatchContentContainer {
 	removeChild(child: unknown): void;
 }
 
-/** Minimal AssistantMessageComponent instance shape after updateContent runs. */
-interface PatchTargetInstance {
+/** Minimal AssistantMessageComponent instance shape after updateContent runs.
+ * Exported (ticket 41) so index.ts can type the instance it captures at text_end
+ * for later narration hide/no-op, without re-declaring the shape. */
+export interface PatchTargetInstance {
 	contentContainer?: PatchContentContainer;
 	/** The raw message the component last rendered (used for retroactive removal). */
 	lastMessage?: { content?: unknown };
+	/** Re-render from `lastMessage` (or an explicitly passed message) through
+	 * whatever updateContent is CURRENTLY bound \u2014 original or patched \u2014 so a
+	 * narration hide (ticket 41, hideMessageTextBlock) composes with the spacer
+	 * patch instead of bypassing it. */
+	updateContent?: (message: { content?: unknown }, ...rest: unknown[]) => unknown;
 }
 
 /** The prototype carrying the `updateContent(message, isStreaming?)` method. */
@@ -372,6 +379,41 @@ export function findAssistantMessageComponents(root: unknown): PatchTargetInstan
 	};
 	visit(root);
 	return found;
+}
+
+/**
+ * Retroactively hide ONE text content block of a live AssistantMessageComponent
+ * instance (ticket 41): rebuild the message through whatever updateContent is
+ * CURRENTLY bound (original or spacer-patched) with `content[contentIndex]`'s
+ * text blanked, so it renders zero rows exactly like a suppressed thinking run \u2014
+ * the ALREADY-INSTALLED spacer patch (if active) then strips its bordering
+ * spacer for free, since its detection is structural (visible-row count), not
+ * keyed to message type. Used when a text block that streamed natively turns out
+ * to be narration (something followed it), not the final answer \u2014 which is why
+ * this call must happen promptly, while the block is still likely in-viewport
+ * (same safety reasoning as absorbing tool rows at turn_end, ticket 08).
+ *
+ * NEVER mutates `instance.lastMessage` or its `content` array in place \u2014 only a
+ * shallow copy is passed to updateContent \u2014 so this is render-only and cannot
+ * touch what pi persists or resends to the provider (the byte-identical-context
+ * constraint, tickets 22/26). Returns false (no-op) when the instance, its
+ * message, or the indexed block don't look right \u2014 fails open rather than
+ * risking a wrong removal.
+ */
+export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex: number): boolean {
+	const content = instance.lastMessage?.content;
+	if (!Array.isArray(content) || contentIndex < 0 || contentIndex >= content.length) return false;
+	const block = content[contentIndex] as { type?: unknown; text?: unknown };
+	if (!block || block.type !== "text" || typeof block.text !== "string") return false;
+	if (typeof instance.updateContent !== "function") return false;
+	const blanked = content.slice();
+	blanked[contentIndex] = { ...block, text: "" };
+	try {
+		instance.updateContent({ ...instance.lastMessage, content: blanked });
+	} catch {
+		return false; // fail open: native rendering stays exactly as it was
+	}
+	return true;
 }
 
 /** Width used to measure child heights when deciding which spacers are dead.

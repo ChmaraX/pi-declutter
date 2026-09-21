@@ -37,11 +37,13 @@ import {
 	MAX_PREVIEW_LINE_LEN,
 	MAX_THOUGHT_SUMMARY_LEN,
 	memberNodeId,
+	narrationNodeId,
 	parseNodeId,
 	type PersistedCardData,
 	previewLines,
 	type ShapeGroup,
 	type ShapeItem,
+	type ShapeNarration,
 	type ShapeThought,
 	shapeCard,
 	shouldReappendCard,
@@ -91,9 +93,14 @@ function thought(overrides: Partial<ShapeThought> = {}): ShapeThought {
 	return { ms: 0, summary: "", tail: [], ...overrides };
 }
 
-/** Wrap a group / thought as a top-level card entry (ticket 21). */
+function narration(overrides: Partial<ShapeNarration> = {}): ShapeNarration {
+	return { text: "", summary: "", ...overrides };
+}
+
+/** Wrap a group / thought / narration as a top-level card entry (ticket 21/41). */
 const ge = (g: ShapeGroup): CardEntry => ({ kind: "group", group: g });
 const te = (t: ShapeThought): CardEntry => ({ kind: "thought", thought: t });
+const ne = (n: ShapeNarration): CardEntry => ({ kind: "narration", narration: n });
 
 function model(overrides: Partial<CardShapeModel> = {}): CardShapeModel {
 	return { live: false, elapsedMs: 39000, failures: 0, entries: [], ...overrides };
@@ -321,14 +328,18 @@ test("parseNodeId inverts the node-id helpers", () => {
 	assert.deepEqual(parseNodeId(groupNodeId(3)), { kind: "group", entryIndex: 3 });
 	assert.deepEqual(parseNodeId(memberNodeId(2, 5)), { kind: "member", entryIndex: 2, itemIndex: 5 });
 	assert.deepEqual(parseNodeId(thoughtNodeId(4)), { kind: "thought", entryIndex: 4 });
+	assert.deepEqual(parseNodeId(narrationNodeId(7)), { kind: "narration", entryIndex: 7 });
 	// Unknown ids resolve to the inert header.
 	assert.deepEqual(parseNodeId("nonsense"), { kind: "header" });
 });
 
-test("thoughtNodeId and groupNodeId never collide at the same top-level index", () => {
+test("thoughtNodeId, groupNodeId, and narrationNodeId never collide at the same top-level index", () => {
 	assert.notEqual(thoughtNodeId(2), groupNodeId(2));
+	assert.notEqual(narrationNodeId(2), groupNodeId(2));
+	assert.notEqual(narrationNodeId(2), thoughtNodeId(2));
 	assert.deepEqual(parseNodeId(thoughtNodeId(2)), { kind: "thought", entryIndex: 2 });
 	assert.deepEqual(parseNodeId(groupNodeId(2)), { kind: "group", entryIndex: 2 });
+	assert.deepEqual(parseNodeId(narrationNodeId(2)), { kind: "narration", entryIndex: 2 });
 });
 
 // ── Live parity: same tree live and settled, only header + spinner differ ────────
@@ -444,6 +455,35 @@ test("a settled thought with a captured tail shows '· Thought Ns · <summary> �
 	assert.ok(!render(m).some((l) => l.includes("a vs b")));
 	assert.ok(!shaped.lines.some((l) => l.kind === "preview"));
 	assert.ok(!render(m).some((l) => l.includes("┌ Thinking")));
+});
+
+// ── Narration entries (ticket 41): intermediate assistant text folded into the
+// card in its chronological spot, always clickable (a modal shows the full text) ──
+
+test("a narration entry shows '› <summary> ▸' and is always openable", () => {
+	const n = narration({ text: "Checking the config file next, then re-running the tests.", summary: "Checking the config file next…" });
+	const m = model({ entries: [ne(n)] });
+	const shaped = shapeCard(m, exp(), SPIN);
+	assert.equal(line(shaped.lines[1]), "  › Checking the config file next… ▸");
+	assert.equal(shaped.rowMap[1], narrationNodeId(0));
+	assert.equal(shaped.lines[1].kind, "narration");
+	// Never rendered as a Fowler-style inline box; the full text lives in the modal.
+	assert.ok(!render(m).some((l) => l.includes("Checking the config file next, then")));
+});
+
+test("narration entries sit between the groups they separated, in event order", () => {
+	const read = group({ label: "Read files", items: [item({ label: "Read a.ts" })] });
+	const grep = group({ label: "Searched", items: [item({ label: "Searched for TODO", glyph: "⌕" })] });
+	const n = narration({ summary: "Now checking for TODOs." });
+	const m = model({ entries: [ge(read), ne(n), ge(grep)] });
+	const lines = render(m);
+	// header, read row, narration row, grep row.
+	assert.equal(lines.length, 4);
+	assert.ok(lines[1].includes("Read a.ts"));
+	assert.ok(lines[2].includes("Now checking for TODOs."));
+	assert.ok(lines[3].includes("Searched for TODO"));
+	const shaped = shapeCard(m, exp(), SPIN);
+	assert.equal(shaped.rowMap[2], narrationNodeId(1)); // top-level index 1
 });
 
 // ── Live thinking entry (ticket 23): spinner row, in-place transform, live tail ──

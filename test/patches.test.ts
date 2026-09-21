@@ -25,6 +25,7 @@ import { test } from "node:test";
 import {
 	acquireLeadingSpacerPatch,
 	findAssistantMessageComponents,
+	hideMessageTextBlock,
 	installLeadingSpacerPatch,
 	isAssistantMessageComponentLike,
 	isLeadingSpacer,
@@ -504,4 +505,82 @@ test("acquireLeadingSpacerPatch: fails open on a drifted live prototype (found i
 	assert.equal(result.patch.reason, "shape-drift");
 	assert.equal(result.instance, amc);
 	assert.equal(warnings.length, 1);
+});
+
+// \u2500\u2500 hideMessageTextBlock (ticket 41): retroactively hide a confirmed-narration
+// text block by rebuilding through whatever updateContent is CURRENTLY bound,
+// so it composes with the installed spacer patch instead of bypassing it \u2500\u2500
+
+test("hideMessageTextBlock: blanks the indexed text block, which then renders zero rows", () => {
+	const { instance } = makeFakeTarget();
+	const message: FakeMessage = { content: [{ type: "thinking", thinking: "Planning" }, { type: "text", text: "Narration paragraph." }] };
+	instance.updateContent(message);
+	// Before: leading Spacer (visible content) + thinking child + trailing Spacer
+	// (text follows the thinking run) + FakeText.
+	assert.equal(instance.contentContainer.children.length, 4);
+	assert.ok(instance.contentContainer.children.some((c) => c instanceof FakeText));
+
+	const hidden = hideMessageTextBlock(instance, 1);
+	assert.equal(hidden, true);
+	// The message is rebuilt with content[1].text blanked: FakeText's own
+	// "(text.trim())" guard skips adding it, AND hasVisibleAfter is recomputed
+	// against the now-blanked content, so the TRAILING spacer (which only existed
+	// because visible text followed the thinking) is no longer added either \u2014 only
+	// the LEADING spacer remains (thinking itself is still visible raw content, the
+	// pre-existing floor this patch layer doesn't touch without the strip patch).
+	assert.equal(instance.contentContainer.children.length, 2);
+	assert.equal(instance.contentContainer.children.some((c) => c instanceof FakeText), false);
+	assert.equal(instance.contentContainer.children.some((c) => c instanceof Spacer), true);
+});
+
+test("hideMessageTextBlock: composes with the installed spacer patch (bordering spacer also cleaned up)", () => {
+	const { proto, instance } = makeFakeTarget();
+	const patch = installLeadingSpacerPatch({ prototype: proto, spacerClass: Spacer });
+	const message: FakeMessage = { content: [{ type: "text", text: "Only narration, nothing else." }] };
+	instance.updateContent(message);
+	// Leading Spacer + FakeText (visible text \u2014 the patch only strips SUPPRESSED
+	// thinking, so this spacer survives the initial render).
+	assert.equal(instance.contentContainer.children.length, 2);
+
+	const hidden = hideMessageTextBlock(instance, 0);
+	assert.equal(hidden, true);
+	// Rebuilt through the PATCHED updateContent: the text is gone, and since the
+	// message is now visually all-blank, the patch's structural strip also removes
+	// the now-dead leading Spacer \u2014 zero rows total, matching a suppressed thinking
+	// message.
+	assert.equal(instance.contentContainer.children.length, 0);
+	patch.uninstall();
+});
+
+test("hideMessageTextBlock: NEVER mutates the original message or its content array", () => {
+	const { instance } = makeFakeTarget();
+	const original: FakeMessage = { content: [{ type: "text", text: "Keep me intact." }] };
+	const originalContentArray = original.content;
+	instance.updateContent(original);
+
+	hideMessageTextBlock(instance, 0);
+
+	// The ORIGINAL object the caller (index.ts) still holds a reference to (e.g. for
+	// persistence / provider resend) is untouched \u2014 render-only, never a mutation.
+	assert.equal(original.content[0].text, "Keep me intact.");
+	assert.equal(original.content, originalContentArray);
+	// instance.lastMessage now points at a NEW object (the rebuild), not `original`.
+	assert.notEqual(instance.lastMessage, original);
+});
+
+test("hideMessageTextBlock: fails open (false, no-op) on an out-of-range or wrong-type index", () => {
+	const { instance } = makeFakeTarget();
+	const message: FakeMessage = { content: [{ type: "thinking", thinking: "Planning" }, { type: "text", text: "Answer" }] };
+	instance.updateContent(message);
+	const childrenBefore = instance.contentContainer.children.length;
+
+	assert.equal(hideMessageTextBlock(instance, 99), false); // out of range
+	assert.equal(hideMessageTextBlock(instance, 0), false); // index 0 is thinking, not text
+	assert.equal(hideMessageTextBlock(instance, -1), false);
+	assert.equal(instance.contentContainer.children.length, childrenBefore, "no-op left the render untouched");
+});
+
+test("hideMessageTextBlock: fails open when the instance has no lastMessage or updateContent yet", () => {
+	const bare = { contentContainer: new FakeContainer() } as unknown as Parameters<typeof hideMessageTextBlock>[0];
+	assert.equal(hideMessageTextBlock(bare, 0), false);
 });

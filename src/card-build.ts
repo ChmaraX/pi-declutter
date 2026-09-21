@@ -5,8 +5,10 @@
 import {
 	type CardEntry,
 	coalesceThoughts,
+	deriveThoughtSummary,
 	type ShapeGroup,
 	type ShapeItem,
+	type ShapeNarration,
 	type ShapeThought,
 	toolGlyph,
 } from "./card-shape.ts";
@@ -102,6 +104,16 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 			cardEntries.push({ kind: "thought", thought: shapeThought });
 			continue;
 		}
+		if (entry.kind === "narration") {
+			// Ticket 41: an intermediate assistant paragraph folded into the card because
+			// something followed it (the true final answer never reaches here \u2014
+			// Grouper.finalize() pops it out first). Reuse the thought summary deriver
+			// (generic prose truncation, not thinking-specific).
+			const summary = deriveThoughtSummary(entry.text) || "Message";
+			const narration: ShapeNarration = { text: entry.text, summary };
+			cardEntries.push({ kind: "narration", narration });
+			continue;
+		}
 		const items: ShapeItem[] = [];
 		for (const call of entry.calls) {
 			if (call.isError) failures++;
@@ -139,9 +151,10 @@ export type SettleAction = "freeze-empty" | "settle-live" | "append-settled";
 /** Decide the settle action from the built entries + whether a live card exists.
  * Pure: the branching that settleResponse applies imperatively. */
 export function settleAction(build: CardEntryBuild, hasLiveCard: boolean): SettleAction {
-	const hasRenderable = build.entries.some(
-		(entry) => entry.kind === "thought" || entry.group.label || entry.group.items.length > 0,
-	);
+	const hasRenderable = build.entries.some((entry) => {
+		if (entry.kind === "thought" || entry.kind === "narration") return true;
+		return Boolean(entry.group.label || entry.group.items.length > 0);
+	});
 	if (!hasRenderable) return "freeze-empty";
 	return hasLiveCard ? "settle-live" : "append-settled";
 }

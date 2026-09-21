@@ -4,7 +4,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CardEntry, CardModel, ShapeItem } from "./card-shape.ts";
-import { itemModalContent, type ModalContent, thoughtModalContent } from "./modal.ts";
+import { itemModalContent, type ModalContent, narrationModalContent, thoughtModalContent } from "./modal.ts";
 
 /** A live modal component the controller shows in the overlay. Kept as an
  * injected interface so the controller does not import the pi-tui-backed
@@ -153,6 +153,12 @@ export class ModalController {
 		// reasoning, not the compact previewLines-capped `tail` (that stays the card
 		// row's glance view). Mirrors the tool-row fullText pattern.
 		this.showModal(thoughtModalContent(entry.thought, entry.thought.fullText));
+	}
+
+	openNarrationModal(cardId: string, entryIndex: number): void {
+		const entry = this.entryAt(cardId, entryIndex);
+		if (!entry || entry.kind !== "narration") return;
+		this.showModal(narrationModalContent(entry.narration));
 	}
 
 	/** Force-close and clear the copy-status timer (called at session_shutdown). */

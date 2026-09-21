@@ -73,6 +73,87 @@ export function thoughtModalContent(thought: ShapeThought, fullText?: string): M
 	};
 }
 
+/** Measures the display width of a string. Defaults to code-point count so
+ * modal.ts stays pi-import-free and headlessly testable; modal-view.ts passes
+ * pi-tui's `visibleWidth` for correct wide-char handling at render time. */
+export type WidthFn = (s: string) => number;
+
+const codePointWidth: WidthFn = (s) => [...s].length;
+
+/**
+ * Word-wrap one source line to `width` display columns (ticket 39). Breaks on
+ * whitespace where possible; a single unbreakable run longer than `width` is
+ * hard-broken into `width`-sized chunks. An empty line stays one empty row (so
+ * blank separators in multi-paragraph bodies are preserved). Pure: width is
+ * measured via the injected `measure` (default code-point count).
+ *
+ * Returns at least one row for every input line, so the row count is stable and
+ * the scroll math downstream operates on the wrapped array.
+ */
+export function wrapLine(line: string, width: number, measure: WidthFn = codePointWidth): string[] {
+	const limit = Math.max(1, width);
+	if (line === "") return [""];
+	if (measure(line) <= limit) return [line];
+
+	const rows: string[] = [];
+	// Split on runs of spaces, keeping words; collapse the split spaces into single
+	// separators (leading indentation on the first word is preserved by treating a
+	// leading empty token — see below).
+	const words = line.split(" ");
+	let current = "";
+	const pushCurrent = (): void => {
+		if (current !== "") {
+			rows.push(current);
+			current = "";
+		}
+	};
+	// Hard-break a single token that itself exceeds the width into width-sized
+	// chunks (measured, so wide chars never overflow a chunk).
+	const hardChunks = (token: string): string[] => {
+		const chunks: string[] = [];
+		let chunk = "";
+		for (const ch of token) {
+			if (measure(chunk + ch) > limit) {
+				if (chunk !== "") chunks.push(chunk);
+				chunk = ch;
+			} else {
+				chunk += ch;
+			}
+		}
+		if (chunk !== "") chunks.push(chunk);
+		return chunks;
+	};
+
+	for (const word of words) {
+		const candidate = current === "" ? word : `${current} ${word}`;
+		if (measure(candidate) <= limit) {
+			current = candidate;
+			continue;
+		}
+		// Candidate overflows: flush what we have, then place the word.
+		pushCurrent();
+		if (measure(word) <= limit) {
+			current = word;
+		} else {
+			const chunks = hardChunks(word);
+			// All but the last chunk are full rows; the last continues `current`.
+			for (let i = 0; i < chunks.length - 1; i++) rows.push(chunks[i]);
+			current = chunks[chunks.length - 1] ?? "";
+		}
+	}
+	pushCurrent();
+	return rows.length > 0 ? rows : [""];
+}
+
+/** Wrap every source body line to `width`, flattening into the display-row array
+ * the scroll window operates on (ticket 39). Memoize per width at the call site;
+ * this is a pure transform. */
+export function wrapBody(body: readonly string[], width: number, measure: WidthFn = codePointWidth): string[] {
+	const out: string[] = [];
+	for (const line of body) out.push(...wrapLine(line, width, measure));
+	return out;
+}
+
 /** A vertical scroll window over `total` lines showing `viewport` at a time.
  * Clamped so `top` never scrolls past the last full page. Pure. */
 export interface ScrollWindow {

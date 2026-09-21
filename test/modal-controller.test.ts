@@ -83,7 +83,7 @@ function makeController(model: CardModel | undefined) {
 		copyToClipboard: async (t: string) => {
 			copied = t;
 		},
-		makeModal: () => ({ setTerminalHeight() {} }),
+		makeModal: () => ({ setTerminalHeight() {}, setTerminalWidth() {} }),
 	});
 	return { controller, opens, statuses, getCopied: () => copied };
 }

@@ -11,6 +11,7 @@ import { itemModalContent, type ModalContent, thoughtModalContent } from "./moda
  * modal-view (which keeps it unit-testable without the pi-tui runtime). */
 export interface ModalComponent {
 	setTerminalHeight(height: number): void;
+	setTerminalWidth(width: number): void;
 }
 
 /** Minimal overlay handle: hide() closes the overlay (a swap or teardown). */
@@ -90,8 +91,9 @@ export class ModalController {
 						anchor: "center",
 						width: "80%",
 						maxHeight: "80%",
-						visible: (_termWidth, termHeight) => {
+						visible: (termWidth, termHeight) => {
 							modal?.setTerminalHeight(termHeight);
+							modal?.setTerminalWidth(termWidth);
 							return true;
 						},
 					},

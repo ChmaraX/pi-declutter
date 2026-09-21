@@ -12,7 +12,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Focusable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
-import { clampScrollTop, type ModalContent, scrollHint, visibleSlice } from "./modal.ts";
+import { clampScrollTop, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
 import { styleTone } from "./styling.ts";
 
 /** Max body rows the modal shows before scrolling (ticket 35). The overlay's
@@ -55,6 +55,17 @@ export class OutputModal implements Focusable {
 	 * (maxHeight 80%) instead of a fixed cap that clips the footer on short
 	 * terminals. 0 until the first callback; render() then falls back to the cap. */
 	private termHeight = 0;
+	/** Live terminal width, fed by the overlay's `visible(termW, termH)` callback
+	 * (ticket 39). Lets a mid-session resize reflow the open modal. 0 until the
+	 * first callback; render() wraps against its own width argument regardless. */
+	private termWidth = 0;
+	/** Body wrapped to the last render width, memoized so wrapping runs once per
+	 * width change rather than every frame (ticket 39). */
+	private wrappedBody: string[] = [];
+	private wrappedForWidth = -1;
+	/** Content width the body was last wrapped/scrolled against, so handleInput's
+	 * paging math uses the same total row count render() produced. */
+	private lastInnerContentWidth = 78;
 	private readonly content: ModalContent;
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
@@ -73,6 +84,21 @@ export class OutputModal implements Focusable {
 		this.termHeight = height;
 	}
 
+	/** Called from the overlay's `visible` callback with the current terminal width
+	 * so a resize reflows the wrapped body (ticket 39). */
+	setTerminalWidth(width: number): void {
+		this.termWidth = width;
+	}
+
+	/** The body wrapped to `innerContentWidth`, memoized per width (ticket 39). */
+	private bodyRows(innerContentWidth: number): string[] {
+		if (this.wrappedForWidth !== innerContentWidth) {
+			this.wrappedBody = wrapBody(this.content.body, innerContentWidth, visibleWidth);
+			this.wrappedForWidth = innerContentWidth;
+		}
+		return this.wrappedBody;
+	}
+
 	invalidate(): void {}
 
 	handleInput(data: string): void {
@@ -84,7 +110,7 @@ export class OutputModal implements Focusable {
 			this.onCopy();
 			return;
 		}
-		const total = this.content.body.length;
+		const total = this.bodyRows(this.lastInnerContentWidth).length;
 		const page = Math.max(1, this.lastViewport - 1);
 		if (matchesKey(data, "up")) this.top -= 1;
 		else if (matchesKey(data, "down")) this.top += 1;
@@ -129,19 +155,25 @@ export class OutputModal implements Focusable {
 		// fixed cap. Either way scroll covers any overflow.
 		const overlayRows = this.termHeight > 0 ? Math.floor(this.termHeight * 0.8) : MODAL_BODY_MAX_ROWS + MODAL_CHROME_ROWS;
 		const roomForBody = Math.max(1, overlayRows - MODAL_CHROME_ROWS);
-		const viewport = Math.max(1, Math.min(this.content.body.length, MODAL_BODY_MAX_ROWS, roomForBody));
+		// Body is word-wrapped to the content width (ticket 39), so long lines flow
+		// onto as many display rows as needed instead of being truncated with "…".
+		// The body cell has one leading space, so wrap to innerW - 1.
+		const innerContentWidth = Math.max(1, innerW - 1);
+		this.lastInnerContentWidth = innerContentWidth;
+		const wrapped = this.bodyRows(innerContentWidth);
+		const viewport = Math.max(1, Math.min(wrapped.length, MODAL_BODY_MAX_ROWS, roomForBody));
 		this.lastViewport = viewport;
-		this.top = clampScrollTop(this.top, this.content.body.length, viewport);
-		const slice = visibleSlice(this.content.body, this.top, viewport);
+		this.top = clampScrollTop(this.top, wrapped.length, viewport);
+		const slice = visibleSlice(wrapped, this.top, viewport);
 		for (const bodyLine of slice) {
-			lines.push(rowLine(` ${th.fg("dim", truncateVisible(bodyLine, innerW - 1))}`));
+			lines.push(rowLine(` ${th.fg("dim", bodyLine)}`));
 		}
 		// Pad the body area to a stable height so the box doesn't jump while scrolling
 		// a short tail (only when there IS content to stabilize around).
 		for (let i = slice.length; i < viewport; i++) lines.push(rowLine(""));
 
 		// Footer hint.
-		const hint = scrollHint(this.top, viewport, this.content.body.length);
+		const hint = scrollHint(this.top, viewport, wrapped.length);
 		const hintPart = hint ? `${hint}  ·  ` : "";
 		const footer = ` ${th.fg("dim", `${hintPart}↑/↓/PgUp scroll · c copy · Esc close`)}`;
 		lines.push(border("├") + border("─".repeat(innerW)) + border("┤"));

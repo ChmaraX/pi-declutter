@@ -15,6 +15,8 @@ import {
 	scrollHint,
 	thoughtModalContent,
 	visibleSlice,
+	wrapBody,
+	wrapLine,
 } from "../src/modal.ts";
 
 function item(overrides: Partial<ShapeItem> = {}): ShapeItem {
@@ -117,4 +119,59 @@ test("scrollHint is empty when everything fits and a 1-based range otherwise", (
 	assert.equal(scrollHint(0, 5, 20), "1–5 / 20");
 	assert.equal(scrollHint(10, 5, 20), "11–15 / 20");
 	assert.equal(scrollHint(100, 5, 20), "16–20 / 20"); // clamped to the last page
+});
+
+// ── wrapLine / wrapBody (ticket 39) ─────────────────────────────────────────────
+
+test("wrapLine leaves a line that fits unchanged", () => {
+	assert.deepEqual(wrapLine("short line", 20), ["short line"]);
+	assert.deepEqual(wrapLine("exactly-ten", 11), ["exactly-ten"]);
+});
+
+test("wrapLine breaks a long line on word boundaries, never mid-word when avoidable", () => {
+	const rows = wrapLine("the quick brown fox jumps over", 10);
+	// Each row within the 10-col budget; words kept whole.
+	for (const r of rows) assert.ok([...r].length <= 10, `row too wide: ${JSON.stringify(r)}`);
+	assert.deepEqual(rows, ["the quick", "brown fox", "jumps over"]);
+	// Rejoining the rows on spaces reproduces the original words in order.
+	assert.equal(rows.join(" "), "the quick brown fox jumps over");
+});
+
+test("wrapLine hard-breaks a single unbreakable token longer than the width", () => {
+	const rows = wrapLine("abcdefghijklmnop", 5);
+	assert.deepEqual(rows, ["abcde", "fghij", "klmno", "p"]);
+});
+
+test("wrapLine hard-breaks a long token that starts mid-line after a word", () => {
+	const rows = wrapLine("hi abcdefghij", 5);
+	// "hi" fits its own row, then the 10-char token hard-breaks into 5-col chunks.
+	assert.deepEqual(rows, ["hi", "abcde", "fghij"]);
+});
+
+test("wrapLine preserves an empty line as a single empty row", () => {
+	assert.deepEqual(wrapLine("", 10), [""]);
+});
+
+test("wrapLine honours an injected width measure (wide chars count double)", () => {
+	// Treat every char as width 2: a 4-char string needs 8 cols, so at width 5 it
+	// hard-breaks after 2 chars per row.
+	const double = (s: string) => [...s].length * 2;
+	assert.deepEqual(wrapLine("abcd", 5, double), ["ab", "cd"]);
+});
+
+test("wrapBody flattens multi-paragraph body, keeping blank separators", () => {
+	const body = ["the quick brown fox", "", "jumps over the lazy dog"];
+	const rows = wrapBody(body, 10);
+	assert.deepEqual(rows, ["the quick", "brown fox", "", "jumps over", "the lazy", "dog"]);
+});
+
+test("wrapped body drives the scroll math on the larger row count", () => {
+	// Two source lines wrap to five rows; a 3-row viewport then scrolls them.
+	const body = ["aaa bbb ccc ddd", "eee fff"];
+	const rows = wrapBody(body, 7);
+	assert.deepEqual(rows, ["aaa bbb", "ccc ddd", "eee fff"]);
+	assert.equal(rows.length, 3);
+	// Viewport of 2 over 3 rows: top clamps to 1, hint reflects the wrapped total.
+	assert.deepEqual(visibleSlice(rows, 5, 2), ["ccc ddd", "eee fff"]);
+	assert.equal(scrollHint(0, 2, rows.length), "1–2 / 3");
 });

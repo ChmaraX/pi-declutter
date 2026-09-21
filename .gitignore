@@ -1,0 +1,7 @@
+node_modules/
+
+# Local development-only artifacts — not part of the published extension.
+.scratch/
+docs/
+prototypes/
+spike/

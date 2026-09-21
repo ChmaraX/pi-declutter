@@ -1,0 +1,16 @@
+{
+  "name": "pi-run-feed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi TUI extension: Codex/Cursor-style activity feed (one activity card per response that renders in its final shape from the first tool and grows in place, settling collapsibly).",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts"
+  }
+}

@@ -75,6 +75,7 @@ function fakeItem(): ShapeItem {
 function makeController(model: CardModel | undefined) {
 	const { ctx, opens, statuses } = makeFakeCtx();
 	let copied: string | undefined;
+	const contents: import("../src/modal.ts").ModalContent[] = [];
 	const controller = new ModalController({
 		getUiCtx: () => ctx as never,
 		hasLiveUI: (c) => (c as { mode: string }).mode === "tui",
@@ -83,9 +84,12 @@ function makeController(model: CardModel | undefined) {
 		copyToClipboard: async (t: string) => {
 			copied = t;
 		},
-		makeModal: () => ({ setTerminalHeight() {}, setTerminalWidth() {} }),
+		makeModal: (content) => {
+			contents.push(content);
+			return { setTerminalHeight() {}, setTerminalWidth() {} };
+		},
 	});
-	return { controller, opens, statuses, getCopied: () => copied };
+	return { controller, opens, statuses, getCopied: () => copied, contents };
 }
 
 test("ModalController: opens a member modal", () => {
@@ -123,7 +127,7 @@ test("ModalController: a stale/out-of-range click opens nothing", () => {
 
 test("ModalController: thought modal only opens on a thought entry", () => {
 	const thoughtModel = makeModel([
-		{ kind: "thought", thought: { ms: 2000, summary: "Planning", tail: ["line"], live: false } },
+		{ kind: "thought", thought: { ms: 2000, summary: "Planning", tail: ["line"], fullText: "line", live: false } },
 	]);
 	const { controller, opens } = makeController(thoughtModel);
 	controller.openThoughtModal("card", 0);
@@ -132,6 +136,23 @@ test("ModalController: thought modal only opens on a thought entry", () => {
 	const g = makeController(groupModel(fakeItem()));
 	g.controller.openThoughtModal("card", 0);
 	assert.equal(g.opens.length, 0);
+});
+
+test("ModalController: thought modal body is the FULL captured text (ticket 40), not the compact tail", () => {
+	// tail is what the card row's glance view would show (short/capped); fullText is
+	// the real untruncated capture. The modal must render fullText, proving the
+	// fix threads entry.thought.fullText into thoughtModalContent \u2014 not tail.
+	const full = "Paragraph one of real reasoning.\nParagraph two, much longer than the compact tail would ever keep.";
+	const thoughtModel = makeModel([
+		{ kind: "thought", thought: { ms: 4000, summary: "Planning", tail: ["Paragraph one\u2026"], fullText: full, live: false } },
+	]);
+	const { controller, contents } = makeController(thoughtModel);
+	controller.openThoughtModal("card", 0);
+	assert.equal(contents.length, 1);
+	assert.equal(contents[0].copyText, full);
+	assert.deepEqual(contents[0].body, full.split("\n"));
+	// It must NOT be the truncated tail's single line.
+	assert.notDeepEqual(contents[0].body, ["Paragraph one\u2026"]);
 });
 
 test("ModalController: teardown closes an open modal", () => {

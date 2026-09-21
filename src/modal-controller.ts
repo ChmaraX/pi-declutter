@@ -149,7 +149,10 @@ export class ModalController {
 	openThoughtModal(cardId: string, entryIndex: number): void {
 		const entry = this.entryAt(cardId, entryIndex);
 		if (!entry || entry.kind !== "thought") return;
-		this.showModal(thoughtModalContent(entry.thought));
+		// Pass the raw untruncated span text (ticket 40) so the modal shows the full
+		// reasoning, not the compact previewLines-capped `tail` (that stays the card
+		// row's glance view). Mirrors the tool-row fullText pattern.
+		this.showModal(thoughtModalContent(entry.thought, entry.thought.fullText));
 	}
 
 	/** Force-close and clear the copy-status timer (called at session_shutdown). */

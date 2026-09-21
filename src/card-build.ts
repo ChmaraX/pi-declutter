@@ -98,7 +98,7 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 	for (const entry of entries) {
 		if (entry.kind === "thought") {
 			const thought = coalesceThoughts(entry.spans);
-			const shapeThought: ShapeThought = { ms: thought.ms, summary: thought.summary, tail: thought.tail };
+			const shapeThought: ShapeThought = { ms: thought.ms, summary: thought.summary, tail: thought.tail, fullText: thought.fullText };
 			cardEntries.push({ kind: "thought", thought: shapeThought });
 			continue;
 		}

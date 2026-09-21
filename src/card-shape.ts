@@ -210,9 +210,14 @@ export interface ShapeThought {
 	ms: number;
 	/** One-line summary of the kept thinking span (ticket 20); "" when none. */
 	summary: string;
-	/** Last ~10 lines of the kept span's text for the modal's "Thinking" body; []
-	 * when none. The modal shows this full captured tail (ticket 35). */
+	/** COMPACT preview only: last ~10 lines of the kept span's text, each
+	 * end-truncated to MAX_PREVIEW_LINE_LEN (ticket 20). Drives the collapsed card
+	 * row's glance view — NOT the modal. [] when none. */
 	tail: string[];
+	/** The kept span's RAW untruncated text (up to THINKING_BUF_MAX, the capture
+	 * ceiling — no line/length capping). This is what the "Thinking" modal shows so
+	 * long reasoning reads to its natural end (ticket 40). "" when none. */
+	fullText: string;
 	/**
 	 * True while the underlying thinking span is still streaming (ticket 23). The
 	 * row then renders "⟳ Thinking… · Xs" with the running spinner mark instead of
@@ -467,11 +472,13 @@ export interface ThoughtSpanInput {
 	text: string;
 }
 
-/** Coalesced thinking for one group: total ms, a one-line summary, a box tail. */
+/** Coalesced thinking for one group: total ms, a one-line summary, a compact box
+ * tail (glance view), and the raw untruncated text for the modal (ticket 40). */
 export interface CoalescedThought {
 	ms: number;
 	summary: string;
 	tail: string[];
+	fullText: string;
 }
 
 /**
@@ -511,6 +518,10 @@ export function coalesceThoughts(spans: readonly ThoughtSpanInput[]): CoalescedT
 		ms,
 		summary: chosen ? deriveThoughtSummary(chosen.text) : "",
 		tail: chosen ? previewLines(chosen.text, MAX_THOUGHT_TAIL) : [],
+		// Raw kept-span text, untouched by previewLines' line/length caps, so the
+		// modal shows the full reasoning (ticket 40). Already bounded upstream by
+		// THINKING_BUF_MAX at capture time.
+		fullText: chosen ? chosen.text : "",
 	};
 }
 

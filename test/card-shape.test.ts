@@ -399,6 +399,28 @@ test("coalesceThoughts sums durations and keeps the LAST >=1s span's summary + t
 	assert.equal(out.ms, 4700); // all durations summed
 	assert.equal(out.summary, "Second real thought"); // last >=1s span wins
 	assert.deepEqual(out.tail, ["Second real thought", "line1", "line2"]);
+	// fullText (ticket 40) is the chosen span's RAW text \u2014 identical shape either way
+	// here since it's short, but it must be the untruncated original, not a rebuild.
+	assert.equal(out.fullText, "Second real thought\nline1\nline2");
+});
+
+test("coalesceThoughts.fullText is UNTRUNCATED (ticket 40) while .tail stays previewLines-capped", () => {
+	// One line far longer than MAX_PREVIEW_LINE_LEN (120), and more real lines than
+	// MAX_THOUGHT_TAIL (10) \u2014 .tail must still cap/truncate for the compact card-row
+	// glance; .fullText must carry every character and every line untouched.
+	const longLine = "x".repeat(300);
+	const manyLines = Array.from({ length: 15 }, (_, i) => `line ${i}`).join("\n");
+	const text = `${longLine}\n${manyLines}`;
+	const out = coalesceThoughts([{ ms: 2000, text }]);
+	// tail: capped to MAX_THOUGHT_TAIL (10) lines, each end-truncated with an ellipsis
+	// when over MAX_PREVIEW_LINE_LEN.
+	assert.equal(out.tail.length, 10);
+	assert.ok(out.tail[0].length <= 120);
+	assert.ok(out.tail.some((line) => line.endsWith("\u2026")) || out.tail[0].length < longLine.length);
+	// fullText: every line, every character, no ellipsis, no cap.
+	assert.equal(out.fullText, text);
+	assert.equal(out.fullText.split("\n").length, 16); // longLine + 15 "line N" rows
+	assert.ok(!out.fullText.includes("\u2026"));
 });
 
 test("coalesceThoughts with only sub-second or text-less spans yields ms but no summary/tail", () => {

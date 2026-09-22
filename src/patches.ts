@@ -416,6 +416,37 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 	return true;
 }
 
+/**
+ * Re-apply hideMessageTextBlock across an ENTIRE live tree, for every text
+ * block whose trimmed content matches one of `texts` (ticket 41). Needed after
+ * ANY full transcript rebuild \u2014 compaction, /resume, /fork \u2014 rebuilds every
+ * AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
+ * (hideMessageTextBlock is render-only and never touches what's persisted, by
+ * the byte-identical-context constraint), so a paragraph already folded into an
+ * activity card would otherwise reappear natively the moment the tree is
+ * rebuilt. Matches by TRIMMED TEXT, not object/instance identity, since every
+ * identity is gone after a rebuild \u2014 the one accepted imprecision: a genuinely
+ * unrelated block with byte-identical text to a past narration entry would also
+ * be hidden. `texts` should be every narration entry's full text still known
+ * (every live/persisted card, plus any not-yet-committed pending block) so
+ * nothing is missed. Returns the number of blocks hidden.
+ */
+export function rehideNarrationAfterRebuild(root: unknown, texts: ReadonlySet<string>): number {
+	if (texts.size === 0) return 0;
+	let hidden = 0;
+	for (const instance of findAssistantMessageComponents(root)) {
+		const content = instance.lastMessage?.content;
+		if (!Array.isArray(content)) continue;
+		for (let i = 0; i < content.length; i++) {
+			const block = content[i] as { type?: unknown; text?: unknown };
+			if (block?.type !== "text" || typeof block.text !== "string") continue;
+			if (!texts.has(block.text.trim())) continue;
+			if (hideMessageTextBlock(instance, i)) hidden++;
+		}
+	}
+	return hidden;
+}
+
 /** Width used to measure child heights when deciding which spacers are dead.
  * Height of a Spacer or a suppressed (blanked) thinking run does not depend on
  * width, and a real text paragraph renders ≥1 row at any sane width, so a fixed

@@ -33,6 +33,7 @@ import {
 	matchesLeadingSpacerShape,
 	onlyVisibleThinking,
 	type RawContentBlock,
+	rehideNarrationAfterRebuild,
 	stripSuppressedThinkingSpacers,
 	suppressedThinkingSpacersToRemove,
 } from "../src/patches.ts";
@@ -583,4 +584,37 @@ test("hideMessageTextBlock: fails open (false, no-op) on an out-of-range or wron
 test("hideMessageTextBlock: fails open when the instance has no lastMessage or updateContent yet", () => {
 	const bare = { contentContainer: new FakeContainer() } as unknown as Parameters<typeof hideMessageTextBlock>[0];
 	assert.equal(hideMessageTextBlock(bare, 0), false);
+});
+
+// \u2500\u2500 rehideNarrationAfterRebuild (ticket 41): re-apply hides across a rebuilt
+// tree after compaction/resume/fork, by TEXT match since identity is gone \u2500\u2500
+
+test("rehideNarrationAfterRebuild: hides every matching text block across multiple instances", () => {
+	// makeLiveAmc (not the bare makeFakeTarget) \u2014 findAssistantMessageComponents'
+	// duck-type ALSO requires the thinking-setter marker, which only makeLiveAmc adds.
+	const a = makeLiveAmc([{ type: "text", text: "Folded narration one." }]);
+	const b = makeLiveAmc([{ type: "thinking", thinking: "Planning" }, { type: "text", text: "Folded narration two." }]);
+	const c = makeLiveAmc([{ type: "text", text: "The real final answer, untouched." }]);
+	const root = { children: [a, b, c] };
+
+	const hidden = rehideNarrationAfterRebuild(root, new Set(["Folded narration one.", "Folded narration two."]));
+	assert.equal(hidden, 2);
+	assert.equal(a.contentContainer.children.some((ch) => ch instanceof FakeText), false);
+	assert.equal(b.contentContainer.children.some((ch) => ch instanceof FakeText), false);
+	// The final answer's text is NOT in the set \u2014 stays fully visible natively.
+	assert.equal(c.contentContainer.children.some((ch) => ch instanceof FakeText), true);
+});
+
+test("rehideNarrationAfterRebuild: an empty text set is a complete no-op (does not walk the tree)", () => {
+	const instance = makeLiveAmc([{ type: "text", text: "Anything." }]);
+	const before = instance.contentContainer.children.length;
+	assert.equal(rehideNarrationAfterRebuild({ children: [instance] }, new Set()), 0);
+	assert.equal(instance.contentContainer.children.length, before);
+});
+
+test("rehideNarrationAfterRebuild: only text whose TRIMMED content matches is hidden (no partial/whitespace false positives)", () => {
+	const instance = makeLiveAmc([{ type: "text", text: "  Exact match.  " }]); // raw has padding
+	const hidden = rehideNarrationAfterRebuild({ children: [instance] }, new Set(["Exact match."])); // set holds the TRIMMED form
+	assert.equal(hidden, 1);
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), false);
 });

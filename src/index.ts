@@ -141,6 +141,7 @@ import {
 	expandRowMapToVisual,
 	groupHasMembersToggle,
 	hoveredNodeAt,
+	narrationTexts,
 	parseNodeId,
 	type PersistedCardData,
 	previewLines,
@@ -157,6 +158,7 @@ import {
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
 	type PatchTargetInstance,
+	rehideNarrationAfterRebuild,
 } from "./patches.ts";
 import { PatchController } from "./patch-controller.ts";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
@@ -572,7 +574,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// settles, it was the true final answer \u2014 never touched, stays visible exactly
 	// as pi always rendered it. Cleared on every confirm-or-reset boundary so a
 	// stale reference never leaks into the next response.
-	let pendingNarration: { instance: PatchTargetInstance; contentIndex: number } | undefined;
+	let pendingNarration: { instance: PatchTargetInstance; contentIndex: number; text: string } | undefined;
 
 	// Built-in tool rows folded into settled cards (session-lived; never cleared).
 	const absorbed: AbsorbState = new Set();
@@ -1417,6 +1419,20 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// entry (reappendedFrom) so one response never yields two cards.
 	pi.on("session_compact", (_event: SessionCompactEvent, ctx: ExtensionContext) => {
 		captureCtx(ctx);
+		// Re-hide already-folded narration (ticket 41): a compaction rebuild recreates
+		// every AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
+		// (hideMessageTextBlock never touches what's persisted \u2014 the byte-identical-
+		// context constraint), so any paragraph already folded into a card would
+		// otherwise reappear natively the instant the tree is rebuilt. Sweep EVERY
+		// tracked card (past + current) plus a still-unconfirmed pending block, and
+		// re-apply the hide to the freshly-rebuilt tree by text match. Independent of
+		// the card-survival logic below \u2014 must run even if that decides there's
+		// nothing to re-append.
+		const texts = new Set<string>();
+		for (const model of view.models.values()) for (const t of narrationTexts(model.entries ?? [])) texts.add(t);
+		if (pendingNarration) texts.add(pendingNarration.text);
+		if (runtime.tui) rehideNarrationAfterRebuild(runtime.tui, texts);
+
 		const entries = ctx.sessionManager.getEntries();
 		let lastCard: CustomEntry<CardModel> | undefined;
 		for (const entry of entries) {
@@ -1529,8 +1545,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				if (hasNonWhitespace(ame.content)) {
 					const instances = findAssistantMessageComponents(runtime.tui);
 					const instance = instances[instances.length - 1];
-					if (instance) pendingNarration = { instance, contentIndex: ame.contentIndex };
+					if (instance) pendingNarration = { instance, contentIndex: ame.contentIndex, text: ame.content.trim() };
 				}
+				// Reflect the new narration entry in the card NOW (it's already in the
+				// grouper's entries \u2014 snapshot() never withholds it), instead of waiting for
+				// the next unrelated event to happen to call refreshLive.
+				refreshLive();
 				break;
 			default:
 				break;

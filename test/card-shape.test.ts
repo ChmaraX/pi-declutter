@@ -38,6 +38,7 @@ import {
 	MAX_THOUGHT_SUMMARY_LEN,
 	memberNodeId,
 	narrationNodeId,
+	narrationTexts,
 	parseNodeId,
 	type PersistedCardData,
 	previewLines,
@@ -484,6 +485,21 @@ test("narration entries sit between the groups they separated, in event order", 
 	assert.ok(lines[3].includes("Searched for TODO"));
 	const shaped = shapeCard(m, exp(), SPIN);
 	assert.equal(shaped.rowMap[2], narrationNodeId(1)); // top-level index 1
+});
+
+test("narrationTexts collects every narration entry's full text, in order, skipping other kinds", () => {
+	const entries: CardEntry[] = [
+		ge(group({ label: "Read files" })),
+		ne(narration({ text: "First note.", summary: "First note." })),
+		te(thought({ ms: 2000, summary: "planning" })),
+		ne(narration({ text: "Second note.", summary: "Second note." })),
+	];
+	assert.deepEqual(narrationTexts(entries), ["First note.", "Second note."]);
+});
+
+test("narrationTexts returns [] when there is no narration", () => {
+	assert.deepEqual(narrationTexts([ge(group()), te(thought())]), []);
+	assert.deepEqual(narrationTexts([]), []);
 });
 
 // ── Live thinking entry (ticket 23): spinner row, in-place transform, live tail ──

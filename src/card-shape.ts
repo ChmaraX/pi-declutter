@@ -270,6 +270,18 @@ export type CardEntry =
 	| { kind: "thought"; thought: ShapeThought }
 	| { kind: "narration"; narration: ShapeNarration };
 
+/** Every narration entry's full text from a card's entries, in order (ticket 41).
+ * Used to re-identify (by content, since object identity is gone) which native
+ * text blocks a full transcript rebuild \u2014 compaction, /resume, /fork \u2014 must have
+ * its hides re-applied to, so a previously-folded paragraph doesn't reappear
+ * natively just because the tree was rebuilt from the original, un-blanked
+ * stored messages (hideMessageTextBlock never touches what's persisted). */
+export function narrationTexts(entries: readonly CardEntry[]): string[] {
+	const out: string[] = [];
+	for (const entry of entries) if (entry.kind === "narration") out.push(entry.narration.text);
+	return out;
+}
+
 /** True when a thought entry carries an expandable "Thinking" box (captured tail). */
 export function thoughtHasBox(thought: ShapeThought): boolean {
 	return thought.tail.length > 0;

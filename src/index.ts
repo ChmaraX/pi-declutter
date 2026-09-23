@@ -154,6 +154,7 @@ import {
 } from "./card-shape.ts";
 import { Grouper, hasNonWhitespace, shouldTick } from "./grouping.ts";
 import {
+	acquireToolRowHidePatch,
 	dumpTranscriptTree,
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
@@ -758,6 +759,53 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (added) runtime.tui?.requestRender();
 	}
 
+	// \u2500\u2500 Universal tool-row absorption (MCP / extension tools) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	// The built-ins absorb via their re-registered renderers (tool-rows.ts); every
+	// other tool's native row is collapsed by a guarded prototype patch on pi's
+	// ToolExecutionComponent, driven by the SAME `absorbed` set (one source of
+	// truth, everything vanishes together at turn_end). Fail-open: while not
+	// installed, non-built-in rows simply keep rendering natively as before.
+	let toolRowPatchInstalled = false;
+	function tryAcquireToolRowPatch(): void {
+		if (toolRowPatchInstalled || !runtime.tui) return;
+		const result = acquireToolRowHidePatch(runtime.tui, (id) => absorbed.has(id));
+		if (result.installed) toolRowPatchInstalled = true;
+	}
+
+	// \u2500\u2500 Click-away modal close (owner request) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	// pi-tui routes a click OUTSIDE every overlay past the overlay layer (hit:
+	// false) straight into the transcript \u2014 the modal never sees it. Wrap the
+	// captured TUI INSTANCE's dispatchMouseToOverlay (feature-detected, instance
+	// property only \u2014 no prototype touched): when a click misses all overlays
+	// while our modal is open, close the modal and swallow the click so it can't
+	// also toggle whatever row happened to sit underneath. Fail-open: without the
+	// method, Esc/q keep working exactly as before.
+	let clickAwayInstalled = false;
+	function installClickAwayClose(): void {
+		if (clickAwayInstalled) return;
+		const tui = runtime.tui as unknown as {
+			dispatchMouseToOverlay?: (event: unknown) => { hit: boolean } | undefined;
+			requestRender?: () => void;
+		} | undefined;
+		if (!tui || typeof tui.dispatchMouseToOverlay !== "function") return;
+		const original = tui.dispatchMouseToOverlay.bind(tui);
+		try {
+			tui.dispatchMouseToOverlay = (event: unknown) => {
+				const out = original(event);
+				const type = (event as { type?: unknown } | undefined)?.type;
+				if (out && out.hit === false && type === "click" && modalController.isOpen()) {
+					modalController.closeModal();
+					tui.requestRender?.();
+					return { hit: true };
+				}
+				return out;
+			};
+			clickAwayInstalled = true;
+		} catch {
+			// Instance not writable \u2014 keep keyboard-only close.
+		}
+	}
+
 	// ── Live card plumbing (ticket 11) ────────────────────────────────────────
 	/**
 	 * Append the activity card EARLY — on the first tool_execution_start of the
@@ -906,6 +954,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	}
 
 	function toggleNode(id: string, nodeId: string): void {
+		// Any node interaction may open a modal \u2014 make sure click-away close is
+		// wired first (idempotent, cheap after the first call).
+		installClickAwayClose();
 		const cv = getCardView(view, id);
 		const node = parseNodeId(nodeId);
 		switch (node.kind) {
@@ -1559,6 +1610,11 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
 		captureCtx(ctx);
+		// Universal tool-row absorption (owner issue: MCP/extension tool rows outside
+		// the card): acquire the ToolExecutionComponent prototype patch as soon as a
+		// live instance exists. This event may run before pi's own UI handler mounts
+		// the component, so tool_execution_end retries too. No-op once installed.
+		tryAcquireToolRowPatch();
 		// A new tool call starting is proof anything pending wasn't the final answer
 		// (ticket 41).
 		confirmNarrationNonFinal();
@@ -1586,22 +1642,22 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_end", (event: ToolExecutionEndEvent, ctx: ExtensionContext) => {
 		captureCtx(ctx);
+		tryAcquireToolRowPatch();
 		const call = ledger.get(event.toolCallId);
 		if (call) {
 			call.endMs = Date.now();
 			call.isError = event.isError;
-			// Capture a short output preview for command/search calls (ticket 12 req 5):
-			// last ~5 lines of the result text already in the ledger. read/edit/write are
-			// skipped (their target line says enough; file bodies would be huge).
+			// Capture the FULL output for EVERY tool (owner issue: MCP/extension tool
+			// modals opened empty \u2014 capture was gated to command/search tools). Bounded
+			// at MAX_MODAL_CAPTURE; truncated command output additionally sets
+			// fullOutputPath (tool_result below), read lazily on open and preferred.
+			const text = extractResultText(event.result);
+			if (text.length > 0) call.fullOutput = text.slice(0, MAX_MODAL_CAPTURE);
+			// The short INLINE preview stays gated to command/search calls (ticket 12
+			// req 5): read/edit/write target lines say enough, file bodies are huge.
 			if (PREVIEW_TOOLS.has(call.name)) {
-				const text = extractResultText(event.result);
 				const preview = previewLines(text);
 				if (preview.length > 0) call.resultPreview = preview;
-				// Capture the FULL output for the modal (ticket 35), bounded. The modal
-				// shows the whole output, not the ~8-line preview tail. Truncated command
-				// output additionally sets fullOutputPath (captured in tool_result below),
-				// read lazily on open and preferred over this in-memory copy.
-				if (text.length > 0) call.fullOutput = text.slice(0, MAX_MODAL_CAPTURE);
 				// On a failed command, capture the exit code for the box badge (ticket 17).
 				if (event.isError) {
 					const code = extractExitCode(text);

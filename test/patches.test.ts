@@ -654,3 +654,64 @@ test("rehideNarrationAfterRebuild: only text whose TRIMMED content matches is hi
 	assert.equal(hidden, 1);
 	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), false);
 });
+
+// ── Universal tool-row hide patch (owner issue 1: MCP/extension rows) ──────────
+
+import { acquireToolRowHidePatch, installToolRowHidePatch, isToolExecutionComponentLike } from "../src/patches.ts";
+
+function makeFakeToolExec(toolCallId: string): { proto: object; instance: { toolCallId: string; render(width: number): string[] } } {
+	const proto = {
+		render(this: { toolCallId: string }, _width: number): string[] {
+			return [`tool row for ${this.toolCallId}`];
+		},
+		updateResult(): void {},
+		markExecutionStarted(): void {},
+	};
+	const instance = Object.create(proto) as { toolCallId: string; toolName: string; render(width: number): string[] };
+	instance.toolCallId = toolCallId;
+	instance.toolName = "github_issue_read";
+	return { proto, instance };
+}
+
+test("installToolRowHidePatch: an absorbed toolCallId renders zero rows; others render natively", () => {
+	const absorbed = new Set<string>(["call-1"]);
+	const { proto, instance: a } = makeFakeToolExec("call-1");
+	const b = Object.create(proto) as { toolCallId: string; toolName: string; render(width: number): string[] };
+	b.toolCallId = "call-2";
+	b.toolName = "web_search";
+	assert.equal(installToolRowHidePatch(proto, (id) => absorbed.has(id)), true);
+	assert.deepEqual(a.render(80), []);
+	assert.deepEqual(b.render(80), ["tool row for call-2"]);
+	// Absorption is live: adding call-2 later hides it on the next render.
+	absorbed.add("call-2");
+	assert.deepEqual(b.render(80), []);
+});
+
+test("installToolRowHidePatch: installs once (second call is a no-op true), fails open on a bad prototype", () => {
+	const { proto } = makeFakeToolExec("x");
+	assert.equal(installToolRowHidePatch(proto, () => false), true);
+	assert.equal(installToolRowHidePatch(proto, () => false), true); // marker short-circuits
+	assert.equal(installToolRowHidePatch({}, () => false), false); // no render fn
+});
+
+test("acquireToolRowHidePatch: finds a live instance through a nested tree and patches its prototype", () => {
+	const absorbed = new Set<string>(["deep-call"]);
+	const { instance } = makeFakeToolExec("deep-call");
+	const root = { children: [{ children: [] }, { children: [instance] }] };
+	const result = acquireToolRowHidePatch(root, (id) => absorbed.has(id));
+	assert.equal(result.installed, true);
+	assert.deepEqual(instance.render(80), []);
+});
+
+test("acquireToolRowHidePatch: reports (not throws) when no instance exists yet", () => {
+	const result = acquireToolRowHidePatch({ children: [] }, () => false);
+	assert.equal(result.installed, false);
+	assert.ok(result.reason);
+});
+
+test("isToolExecutionComponentLike rejects near-misses (missing markExecutionStarted)", () => {
+	assert.equal(
+		isToolExecutionComponentLike({ toolCallId: "x", toolName: "y", render() {}, updateResult() {} }),
+		false,
+	);
+});

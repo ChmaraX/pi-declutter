@@ -733,3 +733,107 @@ export function dumpTranscriptTree(root: unknown, width: number, label: string):
 	visit(root);
 	return out.join("\n");
 }
+
+// ── Universal tool-row absorption patch (owner issue: MCP / extension tool rows
+// render natively outside the card) ─────────────────────────────────────────────
+//
+// The 7 re-registered built-ins absorb via their own renderCall/renderResult
+// (tool-rows.ts). Every OTHER tool — MCP-adapter tools, cursor-sdk tools,
+// web-search, anything another extension registered — renders through pi's
+// ToolExecutionComponent with its owner's renderers, which we cannot
+// re-register without name conflicts. Instead: one guarded patch on the LIVE
+// ToolExecutionComponent prototype (acquired from a real instance, so it works
+// against the minified bundle exactly like the AMC spacer patch) that renders
+// ZERO rows for any toolCallId the feed has absorbed. pi adds these components
+// without surrounding spacers and its own `hideComponent` path already returns
+// [] the same way, so an empty render collapses cleanly.
+
+/** Duck-type for a live ToolExecutionComponent instance (bundle-safe). */
+export function isToolExecutionComponentLike(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	const v = value as {
+		toolCallId?: unknown;
+		toolName?: unknown;
+		render?: unknown;
+		updateResult?: unknown;
+		markExecutionStarted?: unknown;
+	};
+	return (
+		typeof v.toolCallId === "string" &&
+		typeof v.toolName === "string" &&
+		typeof v.render === "function" &&
+		typeof v.updateResult === "function" &&
+		typeof v.markExecutionStarted === "function"
+	);
+}
+
+/** Marker so the render patch installs exactly once per prototype. */
+const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
+
+/**
+ * Patch `proto.render` so any instance whose toolCallId `isAbsorbed` renders
+ * zero rows. `isAbsorbed` is a callback (not a snapshot) so the SAME shared
+ * AbsorbState set that collapses built-in rows drives these too — one source of
+ * truth, absorption happens for every tool at the same moment (turn_end).
+ * Returns false (fail open, native rows stay) when the prototype doesn't look
+ * right. Render-only: never touches tool execution, results, or stored data.
+ */
+export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: string) => boolean): boolean {
+	const p = proto as { render?: unknown; [TOOL_ROW_PATCH_MARKER]?: unknown };
+	if (p[TOOL_ROW_PATCH_MARKER]) return true; // already installed
+	if (typeof p.render !== "function") return false;
+	const original = p.render as (this: unknown, width: number) => string[];
+	try {
+		p.render = function (this: { toolCallId?: unknown }, width: number): string[] {
+			const id = this?.toolCallId;
+			if (typeof id === "string" && isAbsorbed(id)) return [];
+			return original.call(this, width);
+		};
+		Object.defineProperty(p, TOOL_ROW_PATCH_MARKER, { value: true, enumerable: false, configurable: true });
+	} catch {
+		return false;
+	}
+	return true;
+}
+
+export interface ToolRowPatchResult {
+	installed: boolean;
+	/** Why acquisition/install did not happen (undefined when installed). */
+	reason?: string;
+}
+
+/**
+ * Find a live ToolExecutionComponent under `root` and patch its prototype.
+ * Call repeatedly (idempotent, cheap once installed) — the first tool of a
+ * session may not be mounted yet when the extension's handler runs.
+ */
+export function acquireToolRowHidePatch(root: unknown, isAbsorbed: (toolCallId: string) => boolean): ToolRowPatchResult {
+	const seen = new Set<unknown>();
+	let instance: object | undefined;
+	const visit = (value: unknown): void => {
+		if (instance || !value || typeof value !== "object" || seen.has(value)) return;
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const child of value) visit(child);
+			return;
+		}
+		if (isToolExecutionComponentLike(value)) {
+			instance = value;
+			return;
+		}
+		const children = (value as { children?: unknown }).children;
+		if (Array.isArray(children)) for (const child of children) visit(child);
+		try {
+			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
+			if (Array.isArray(mounted)) for (const r of mounted) visit(r);
+		} catch {
+			// mid-switch renderer; ignore
+		}
+	};
+	visit(root);
+	if (!instance) return { installed: false, reason: "no live ToolExecutionComponent found yet" };
+	const proto = Object.getPrototypeOf(instance) as object | null;
+	if (!proto) return { installed: false, reason: "instance has no prototype" };
+	if (!installToolRowHidePatch(proto, isAbsorbed)) return { installed: false, reason: "prototype.render not patchable" };
+	return { installed: true };
+}

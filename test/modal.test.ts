@@ -200,3 +200,30 @@ test("wrapped body drives the scroll math on the larger row count", () => {
 	assert.deepEqual(visibleSlice(rows, 5, 2), ["ccc ddd", "eee fff"]);
 	assert.equal(scrollHint(0, 2, rows.length), "1–2 / 3");
 });
+
+// ── Input section (owner issue 2: MCP/extension tool modals were empty) ────────
+
+test("a non-command modal with input leads with Input, then Output, caption Call", () => {
+	const content = itemModalContent(
+		item({ label: "GitHub: issue read", glyph: "◆", input: '{\n  "issue_number": 9953\n}', fullOutput: undefined }),
+		'{"number":9953}',
+	);
+	assert.equal(content.caption, "Call");
+	assert.deepEqual(content.body.slice(0, 4), ["Input:", "{", '  "issue_number": 9953', "}"]);
+	assert.ok(content.body.includes("Output:"));
+	assert.ok(content.body.includes('{"number":9953}'));
+	// Copy carries the whole sectioned body.
+	assert.ok(content.copyText.startsWith("Input:"));
+});
+
+test("a non-command modal with input but NO output says so instead of an empty box", () => {
+	const content = itemModalContent(item({ input: '{"q": "x"}' }));
+	assert.equal(content.body[content.body.length - 1], "(no output captured)");
+});
+
+test("a command modal ignores input (the $ line is the input) and keeps its shape", () => {
+	const content = itemModalContent(item({ command: "ls", input: '{"should": "not appear"}', preview: ["a.ts"] }));
+	assert.equal(content.caption, "Shell");
+	assert.equal(content.body[0], "$ ls");
+	assert.equal(content.body.includes("Input:"), false);
+});

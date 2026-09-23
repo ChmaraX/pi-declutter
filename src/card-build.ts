@@ -6,6 +6,7 @@ import {
 	type CardEntry,
 	coalesceThoughts,
 	deriveNarrationSummary,
+	formatCallInput,
 	type ShapeGroup,
 	type ShapeItem,
 	type ShapeNarration,
@@ -79,6 +80,9 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		exitCode: call.exitCode,
 		fullOutput: call.fullOutput,
 		fullOutputPath: call.fullOutputPath,
+		// The `$ cmd` line IS a command tool's input; everything else gets the
+		// pretty-printed args so the modal is never empty (owner issue 2).
+		input: command === undefined ? formatCallInput(call.arguments) : undefined,
 	};
 }
 

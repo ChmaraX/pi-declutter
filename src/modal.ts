@@ -32,11 +32,14 @@ export interface ModalContent {
 /** Compose the modal content for a tool member row. `fullText`, when provided,
  * is the untruncated output (from the bash fullOutputPath or the raised capture
  * cap); otherwise the shaped preview tail is used. A command tool leads its body
- * with the `$ <command>` line so the modal is self-describing. */
+ * with the `$ <command>` line so the modal is self-describing; every other tool
+ * leads with an Input section (pretty-printed args) when available, so
+ * MCP/extension tool modals are never empty (owner issue 2). */
 export function itemModalContent(item: ShapeItem, fullText?: string): ModalContent {
 	const badge = itemBadge(item);
 	const isCommand = item.command !== undefined;
-	const caption = isCommand ? "Shell" : "Output";
+	// "Call" when the body is sectioned Input/Output; plain "Output" otherwise.
+	const caption = isCommand ? "Shell" : item.input !== undefined ? "Call" : "Output";
 	const raw = fullText !== undefined && fullText.length > 0 ? fullText : item.preview.join("\n");
 	const splitLines = raw.length > 0 ? raw.split("\n") : [];
 	// Ticket-19 cleanup for the modal body (review P2 #2): drop trailing blanks
@@ -45,9 +48,15 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 	const rawLines = boxTail(splitLines, item.exitCode);
 	const body: string[] = [];
 	if (isCommand) body.push(`$ ${item.command}`);
-	body.push(...rawLines);
-	// Copy the command + output together for a command tool, or just the output.
-	const copyText = isCommand ? [`$ ${item.command}`, ...rawLines].join("\n") : rawLines.join("\n");
+	if (!isCommand && item.input !== undefined) {
+		body.push("Input:", ...item.input.split("\n"));
+		body.push("", "Output:");
+	}
+	if (rawLines.length > 0) body.push(...rawLines);
+	else if (!isCommand && item.input !== undefined) body.push("(no output captured)");
+	// Copy the command + output together for a command tool, or the full sectioned
+	// body otherwise.
+	const copyText = isCommand ? [`$ ${item.command}`, ...rawLines].join("\n") : body.join("\n");
 	return {
 		// Match the member row's duration format (formatSeconds → "0.3s").
 		title: `${item.label} (${formatSeconds(item.durMs)})`,

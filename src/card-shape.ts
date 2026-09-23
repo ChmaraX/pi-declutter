@@ -208,6 +208,31 @@ export interface ShapeItem {
 	/** bash/powershell temp-file path holding the untruncated output when the
 	 * command truncated it; read lazily when the modal opens (ticket 35). */
 	fullOutputPath?: string;
+	/** Pretty-printed call arguments for the modal's Input section (owner issue:
+	 * MCP/extension tool modals opened with nothing in them). Undefined for
+	 * command tools (the `$ cmd` line already IS the input) and empty args. */
+	input?: string;
+}
+
+/** Character cap for a captured Input JSON \u2014 keeps persisted card data bounded
+ * (huge tool args like whole file bodies get end-truncated). */
+export const MAX_INPUT_CAPTURE = 4096;
+
+/**
+ * Pretty-print a tool call's arguments for the modal's Input section.
+ * Returns undefined when there is nothing meaningful to show (no args, empty
+ * object, or unserializable). Bounded to MAX_INPUT_CAPTURE.
+ */
+export function formatCallInput(args: Record<string, unknown> | undefined): string | undefined {
+	if (!args || typeof args !== "object") return undefined;
+	if (Object.keys(args).length === 0) return undefined;
+	try {
+		const json = JSON.stringify(args, null, 2);
+		if (!json || json === "{}") return undefined;
+		return json.length > MAX_INPUT_CAPTURE ? `${json.slice(0, MAX_INPUT_CAPTURE - 1)}\u2026` : json;
+	} catch {
+		return undefined; // circular / bigint / hostile args: skip the section
+	}
 }
 
 /**

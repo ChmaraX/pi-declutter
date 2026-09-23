@@ -139,7 +139,7 @@ test("buildCardEntries: a narration entry carries the full text plus a derived s
 	assert.equal(e.kind, "narration");
 	if (e.kind === "narration") {
 		assert.equal(e.narration.text, "**Checking config**\nThe file looks fine so far.");
-		assert.equal(e.narration.summary, "Checking config"); // deriveThoughtSummary strips markdown emphasis
+		assert.equal(e.narration.summary, "Checking config The file looks fine so far."); // full prose kept (multi-line budget), markdown stripped
 	}
 });
 

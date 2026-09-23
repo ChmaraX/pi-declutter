@@ -5,7 +5,7 @@
 import {
 	type CardEntry,
 	coalesceThoughts,
-	deriveThoughtSummary,
+	deriveNarrationSummary,
 	type ShapeGroup,
 	type ShapeItem,
 	type ShapeNarration,
@@ -107,9 +107,9 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 		if (entry.kind === "narration") {
 			// Ticket 41: an intermediate assistant paragraph folded into the card because
 			// something followed it (the true final answer never reaches here \u2014
-			// Grouper.finalize() pops it out first). Reuse the thought summary deriver
-			// (generic prose truncation, not thinking-specific).
-			const summary = deriveThoughtSummary(entry.text) || "Message";
+			// Grouper.finalize() pops it out first). Narration keeps a multi-line prose
+			// budget (owner request) \u2014 the renderer wraps it; \u2026 only after ~2-3 rows.
+			const summary = deriveNarrationSummary(entry.text) || "Message";
 			const narration: ShapeNarration = { text: entry.text, summary };
 			cardEntries.push({ kind: "narration", narration });
 			continue;

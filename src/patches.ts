@@ -381,6 +381,30 @@ export function findAssistantMessageComponents(root: unknown): PatchTargetInstan
 	return found;
 }
 
+/** Per-instance registry of hidden text-block indices. Keyed on the live
+ * component instance (WeakMap: dies with it), consulted by the per-instance
+ * updateContent wrapper below so hides survive FUTURE native re-renders. */
+const hiddenBlockIndices = new WeakMap<object, Set<number>>();
+
+/** Shallow-copy `message` with every registered hidden text block blanked.
+ * Never mutates the passed message or its content array \u2014 it may be pi's own
+ * stored object (the byte-identical-context constraint, tickets 22/26). */
+function blankHiddenBlocks(instance: object, message: { content?: unknown }): { content?: unknown } {
+	const set = hiddenBlockIndices.get(instance);
+	const content = message?.content;
+	if (!set || set.size === 0 || !Array.isArray(content)) return message;
+	const blanked = content.slice();
+	let changed = false;
+	for (const i of set) {
+		const block = blanked[i] as { type?: unknown; text?: unknown } | undefined;
+		if (block?.type === "text" && typeof block.text === "string" && block.text !== "") {
+			blanked[i] = { ...block, text: "" };
+			changed = true;
+		}
+	}
+	return changed ? { ...message, content: blanked } : message;
+}
+
 /**
  * Retroactively hide ONE text content block of a live AssistantMessageComponent
  * instance (ticket 41): rebuild the message through whatever updateContent is
@@ -389,9 +413,17 @@ export function findAssistantMessageComponents(root: unknown): PatchTargetInstan
  * the ALREADY-INSTALLED spacer patch (if active) then strips its bordering
  * spacer for free, since its detection is structural (visible-row count), not
  * keyed to message type. Used when a text block that streamed natively turns out
- * to be narration (something followed it), not the final answer \u2014 which is why
- * this call must happen promptly, while the block is still likely in-viewport
- * (same safety reasoning as absorbing tool rows at turn_end, ticket 08).
+ * to be narration (something followed it), not the final answer.
+ *
+ * The hide is PERSISTENT for the instance's lifetime (owner bug report: a
+ * one-shot blank was resurrected the moment the SAME message kept streaming \u2014
+ * thinking or a second text block after the narration re-renders the full
+ * original content). The index is registered in hiddenBlockIndices and a
+ * per-instance updateContent wrapper (own property, shadows the prototype
+ * method) blanks every registered block on EVERY future call, native or ours.
+ * The wrapper resolves the prototype method at CALL time, so it composes with
+ * the spacer patch regardless of installation order and never recurses (the
+ * prototype call bypasses the own property).
  *
  * NEVER mutates `instance.lastMessage` or its `content` array in place \u2014 only a
  * shallow copy is passed to updateContent \u2014 so this is render-only and cannot
@@ -406,10 +438,40 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 	const block = content[contentIndex] as { type?: unknown; text?: unknown };
 	if (!block || block.type !== "text" || typeof block.text !== "string") return false;
 	if (typeof instance.updateContent !== "function") return false;
-	const blanked = content.slice();
-	blanked[contentIndex] = { ...block, text: "" };
+
+	let set = hiddenBlockIndices.get(instance);
+	const firstHide = set === undefined;
+	if (!set) {
+		set = new Set();
+		hiddenBlockIndices.set(instance, set);
+	}
+	set.add(contentIndex);
+
+	if (firstHide) {
+		try {
+			(instance as { updateContent?: unknown }).updateContent = function (
+				this: PatchTargetInstance,
+				message: { content?: unknown },
+				...rest: unknown[]
+			) {
+				const proto = Object.getPrototypeOf(this) as
+					| { updateContent?: (message: { content?: unknown }, ...rest: unknown[]) => unknown }
+					| null;
+				const fn = proto?.updateContent;
+				if (typeof fn !== "function") return undefined;
+				return fn.call(this, blankHiddenBlocks(this, message), ...rest);
+			};
+		} catch {
+			// Fail open: wrapper install failed \u2014 the immediate blank below still runs
+			// (one-shot behavior), a later native update may resurrect the text.
+		}
+	}
+
 	try {
-		instance.updateContent({ ...instance.lastMessage, content: blanked });
+		// Pass an already-blanked copy (not relying on the wrapper) so the immediate
+		// hide works even when the wrapper install failed; when the wrapper IS
+		// installed, re-blanking an already-blank block is a no-op.
+		instance.updateContent(blankHiddenBlocks(instance, { ...instance.lastMessage }));
 	} catch {
 		return false; // fail open: native rendering stays exactly as it was
 	}

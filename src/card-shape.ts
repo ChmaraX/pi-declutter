@@ -536,6 +536,29 @@ export function deriveThoughtSummary(text: string): string {
 	return "";
 }
 
+/** Character budget for a narration row's inline summary \u2014 roughly 2\u20133 wrapped
+ * terminal rows at common widths before the \u2026 cut (owner request: don't clip to
+ * one line; wrap first, truncate only after a few lines). */
+export const MAX_NARRATION_SUMMARY_LEN = 240;
+
+/**
+ * Narration summary (ticket 41): unlike a thought summary (one dim metadata
+ * line), a narration row IS the assistant's prose \u2014 keep much more of it.
+ * Collapse all whitespace runs (newlines included) to single spaces so the
+ * renderer's natural Text wrapping flows it as a paragraph, strip the same
+ * markdown noise as thought summaries, and end-truncate at
+ * MAX_NARRATION_SUMMARY_LEN. Click still opens the full text in the modal.
+ */
+export function deriveNarrationSummary(text: string): string {
+	const collapsed = text
+		.replace(/[*_`]+/g, "")
+		.replace(/^\s*#+\s*/gm, "")
+		.replace(/^\s*[>\-]\s*/gm, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	return truncateEnd(collapsed, MAX_NARRATION_SUMMARY_LEN);
+}
+
 /**
  * Coalesce a group's thinking spans (ticket 20 rules 1 + 3): sum every span's
  * duration, then take the LAST span that is itself >= MIN_THOUGHT_MS and carries

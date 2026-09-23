@@ -581,6 +581,42 @@ test("hideMessageTextBlock: fails open (false, no-op) on an out-of-range or wron
 	assert.equal(instance.contentContainer.children.length, childrenBefore, "no-op left the render untouched");
 });
 
+test("hideMessageTextBlock: the hide SURVIVES a later native updateContent on the same instance (owner bug: thinking after narration in the SAME message resurrected the text)", () => {
+	const { instance } = makeFakeTarget();
+	instance.updateContent({ content: [{ type: "text", text: "Narration paragraph." }] });
+	assert.equal(hideMessageTextBlock(instance, 0), true);
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), false);
+
+	// The SAME assistant message keeps streaming: pi natively re-renders the FULL
+	// original content (narration text back, plus new thinking + a second text).
+	instance.updateContent({
+		content: [
+			{ type: "text", text: "Narration paragraph." },
+			{ type: "thinking", thinking: "More planning" },
+			{ type: "text", text: "Second block." },
+		],
+	});
+	// Index 0 stays hidden; the new blocks render normally.
+	const texts = instance.contentContainer.children.filter((ch) => ch instanceof FakeText);
+	assert.equal(texts.length, 1); // ONLY "Second block." \u2014 the narration stayed blanked
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeThinking), true);
+});
+
+test("hideMessageTextBlock: two hidden indices on one instance both survive future updates", () => {
+	const { instance } = makeFakeTarget();
+	const full = [
+		{ type: "text" as const, text: "First narration." },
+		{ type: "text" as const, text: "Second narration." },
+		{ type: "text" as const, text: "Final answer." },
+	];
+	instance.updateContent({ content: full });
+	assert.equal(hideMessageTextBlock(instance, 0), true);
+	assert.equal(hideMessageTextBlock(instance, 1), true);
+	instance.updateContent({ content: full }); // native re-render with originals
+	const texts = instance.contentContainer.children.filter((ch) => ch instanceof FakeText);
+	assert.equal(texts.length, 1); // only "Final answer."
+});
+
 test("hideMessageTextBlock: fails open when the instance has no lastMessage or updateContent yet", () => {
 	const bare = { contentContainer: new FakeContainer() } as unknown as Parameters<typeof hideMessageTextBlock>[0];
 	assert.equal(hideMessageTextBlock(bare, 0), false);

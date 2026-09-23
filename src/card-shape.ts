@@ -84,7 +84,7 @@ export function suppressThinkingMarkdown(markdown: string, messageType: string):
 }
 
 /** Theme roles the Component knows how to colour (maps to Theme.fg/bold). */
-export type Tone = "accent" | "bold" | "dim" | "muted" | "success" | "error";
+export type Tone = "accent" | "bold" | "dim" | "muted" | "success" | "error" | "text";
 
 /** One coloured run of text within a line. */
 export interface Segment {
@@ -704,10 +704,12 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 
 		// Narration entry (ticket 41): "\u203a <summary> \u25b8", clickable to open the full
 		// text in a modal \u2014 always openable, since a narration entry only ever exists
-		// when it captured non-whitespace text.
+		// when it captured non-whitespace text. The summary reads as NORMAL body text
+		// (theme "text" role, owner request) \u2014 it IS the assistant's prose, folded, not
+		// metadata like the dim thought/duration rows around it.
 		if (entry.kind === "narration") {
 			const narrationNode = narrationNodeId(k);
-			const segments: Segment[] = [seg("\u203a", "dim"), seg(` ${entry.narration.summary}`, "dim"), openableChevron()];
+			const segments: Segment[] = [seg("\u203a", "dim"), seg(` ${entry.narration.summary}`, "text"), openableChevron()];
 			push(narrationNode, { kind: "narration", indent: 2, segments });
 			return;
 		}

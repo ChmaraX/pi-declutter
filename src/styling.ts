@@ -7,12 +7,13 @@ import type { Segment, ShapeLine, Tone } from "./card-shape.ts";
 
 // The theme foreground role each Tone maps to. `bold` is the one special case
 // (it uses theme.bold(), not a foreground colour) and is handled in styleTone.
-const TONE_ROLE: Record<Exclude<Tone, "bold">, "accent" | "muted" | "success" | "error" | "dim"> = {
+const TONE_ROLE: Record<Exclude<Tone, "bold">, "accent" | "muted" | "success" | "error" | "dim" | "text"> = {
 	accent: "accent",
 	muted: "muted",
 	success: "success",
 	error: "error",
 	dim: "dim",
+	text: "text",
 };
 
 /** Colour text for a Tone through the live theme (shared by segments + badges). */

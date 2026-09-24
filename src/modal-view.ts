@@ -70,6 +70,9 @@ export class OutputModal implements Focusable {
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
 	private readonly onCopy: () => void;
+	/** True while the footer shows "\u2713 Copied" (set/cleared by ModalController
+	 * around its feedback timer). */
+	private copiedVisible = false;
 
 	constructor(content: ModalContent, theme: Theme, done: (result: void) => void, onCopy: () => void) {
 		this.content = content;
@@ -82,6 +85,14 @@ export class OutputModal implements Focusable {
 	 * height so render() can size the body to the actual overlay height. */
 	setTerminalHeight(height: number): void {
 		this.termHeight = height;
+	}
+
+	showCopied(): void {
+		this.copiedVisible = true;
+	}
+
+	clearCopied(): void {
+		this.copiedVisible = false;
 	}
 
 	/** Called from the overlay's `visible` callback with the current terminal width
@@ -172,10 +183,13 @@ export class OutputModal implements Focusable {
 		// a short tail (only when there IS content to stabilize around).
 		for (let i = slice.length; i < viewport; i++) lines.push(rowLine(""));
 
-		// Footer hint.
+		// Footer hint. After a copy, "c copy" becomes a success-toned "✓ Copied"
+		// for a moment (owner request: feedback contained to the floating pane).
 		const hint = scrollHint(this.top, viewport, wrapped.length);
 		const hintPart = hint ? `${hint}  ·  ` : "";
-		const footer = ` ${th.fg("dim", `${hintPart}↑/↓/PgUp scroll · c copy · Esc close`)}`;
+		const footer = this.copiedVisible
+			? ` ${th.fg("dim", `${hintPart}↑/↓/PgUp scroll · `)}${th.fg("success", "✓ Copied")}${th.fg("dim", " · Esc close")}`
+			: ` ${th.fg("dim", `${hintPart}↑/↓/PgUp scroll · c copy · Esc close`)}`;
 		lines.push(border("├") + border("─".repeat(innerW)) + border("┤"));
 		lines.push(rowLine(footer));
 		lines.push(border("╰") + border("─".repeat(innerW)) + border("╯"));

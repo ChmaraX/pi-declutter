@@ -12,6 +12,10 @@ import { itemModalContent, type ModalContent, narrationModalContent, thoughtModa
 export interface ModalComponent {
 	setTerminalHeight(height: number): void;
 	setTerminalWidth(width: number): void;
+	/** Show the in-modal "\u2713 Copied" footer feedback (owner request: contained
+	 * to the floating pane, not pi's status bar). */
+	showCopied(): void;
+	clearCopied(): void;
 }
 
 /** Minimal overlay handle: hide() closes the overlay (a swap or teardown). */
@@ -19,8 +23,12 @@ export interface ModalOverlayHandle {
 	hide(): void;
 }
 
-const MODAL_COPY_STATUS_KEY = "activity-feed-modal-copy";
-const MODAL_COPY_STATUS_MS = 1500;
+/** How long the in-modal "\u2713 Copied" footer feedback stays visible. */
+const MODAL_COPY_FEEDBACK_MS = 1500;
+
+/** Widest the modal ever gets, in columns \u2014 on wide terminals a full-width
+ * floating pane reads poorly (owner request: smaller max width). */
+const MODAL_MAX_WIDTH_COLS = 100;
 
 export interface ModalControllerDeps {
 	/** The live UI context, or undefined outside a live TUI. */
@@ -32,6 +40,8 @@ export interface ModalControllerDeps {
 	readFullOutput(item: ShapeItem): string | undefined;
 	/** Copy raw text to the clipboard (pi's supported helper). */
 	copyToClipboard(text: string): Promise<void>;
+	/** Repaint request so the in-modal copy feedback shows/clears promptly. */
+	requestRender(): void;
 	/** Build the overlay component (injected so the controller does not import the
 	 * pi-tui-backed modal-view). `done` closes the overlay; `onCopy` copies. */
 	makeModal(content: ModalContent, theme: unknown, done: (r: void) => void, onCopy: () => void): ModalComponent;
@@ -79,17 +89,22 @@ export class ModalController {
 		// Capture the live modal so the overlay's `visible` callback can feed it the
 		// current terminal height (review P2 #4). `visible` fires each render cycle.
 		let modal: ModalComponent | undefined;
+		// Width: 80% of the terminal but never wider than MODAL_MAX_WIDTH_COLS \u2014
+		// computed at open (the overlay option is static; a mid-open resize still
+		// reflows the body via render width).
+		const cols = process.stdout.columns ?? 80;
+		const modalWidth = Math.min(Math.max(40, Math.floor(cols * 0.8)), MODAL_MAX_WIDTH_COLS);
 		void ctx.ui
 			.custom<void>(
 				(_tui, theme, _kb, done) => {
-					modal = this.deps.makeModal(content, theme, done, () => this.copyModal(content));
+					modal = this.deps.makeModal(content, theme, done, () => this.copyModal(content, modal));
 					return modal as never;
 				},
 				{
 					overlay: true,
 					overlayOptions: {
 						anchor: "center",
-						width: "80%",
+						width: modalWidth,
 						maxHeight: "80%",
 						visible: (termWidth, termHeight) => {
 							modal?.setTerminalHeight(termHeight);
@@ -113,14 +128,13 @@ export class ModalController {
 			});
 	}
 
-	private copyModal(content: ModalContent): void {
+	private copyModal(content: ModalContent, modal: ModalComponent | undefined): void {
 		void this.deps.copyToClipboard(content.copyText).then(
 			() => {
-				try {
-					this.deps.getUiCtx()?.ui.setStatus(MODAL_COPY_STATUS_KEY, "Copied to clipboard");
-				} catch {
-					// UI may be gone; the copy still happened.
-				}
+				// Feedback lives INSIDE the modal footer (owner request), not pi's
+				// status bar near the input.
+				modal?.showCopied();
+				this.deps.requestRender();
 			},
 			() => {
 				/* clipboard may be unavailable; silent */
@@ -128,13 +142,10 @@ export class ModalController {
 		);
 		if (this.modalCopyTimer) clearTimeout(this.modalCopyTimer);
 		this.modalCopyTimer = setTimeout(() => {
-			try {
-				this.deps.getUiCtx()?.ui.setStatus(MODAL_COPY_STATUS_KEY, undefined);
-			} catch {
-				// ignore
-			}
+			modal?.clearCopied();
+			this.deps.requestRender();
 			this.modalCopyTimer = undefined;
-		}, MODAL_COPY_STATUS_MS);
+		}, MODAL_COPY_FEEDBACK_MS);
 	}
 
 	openMemberModal(cardId: string, entryIndex: number, itemIndex: number): void {

@@ -1004,6 +1004,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		getModel: (cardId) => view.models.get(cardId),
 		readFullOutput,
 		copyToClipboard,
+		requestRender: () => runtime.tui?.requestRender(),
 		makeModal: (content, theme, done, onCopy) => new OutputModal(content, theme as Theme, done, onCopy),
 	});
 

@@ -84,9 +84,10 @@ function makeController(model: CardModel | undefined) {
 		copyToClipboard: async (t: string) => {
 			copied = t;
 		},
+		requestRender: () => {},
 		makeModal: (content) => {
 			contents.push(content);
-			return { setTerminalHeight() {}, setTerminalWidth() {} };
+			return { setTerminalHeight() {}, setTerminalWidth() {}, showCopied() {}, clearCopied() {} };
 		},
 	});
 	return { controller, opens, statuses, getCopied: () => copied, contents };
@@ -161,4 +162,41 @@ test("ModalController: teardown closes an open modal", () => {
 	controller.teardown();
 	assert.equal(opens[0].hidden, true);
 	assert.equal(controller.isOpen(), false);
+});
+
+test("copy feedback is contained to the modal: showCopied after the copy, clearCopied on the timer", async () => {
+	const { ctx } = makeFakeCtx();
+	let renders = 0;
+	const calls: string[] = [];
+	let capturedOnCopy: (() => void) | undefined;
+	const controller = new ModalController({
+		getUiCtx: () => ctx as never,
+		hasLiveUI: () => true,
+		getModel: () => groupModel(fakeItem()),
+		readFullOutput: () => undefined,
+		copyToClipboard: async () => {},
+		requestRender: () => {
+			renders++;
+		},
+		makeModal: (_content, _theme, _done, onCopy) => {
+			capturedOnCopy = onCopy;
+			return {
+				setTerminalHeight() {},
+				setTerminalWidth() {},
+				showCopied() {
+					calls.push("show");
+				},
+				clearCopied() {
+					calls.push("clear");
+				},
+			};
+		},
+	});
+	controller.openMemberModal("card", 0, 0);
+	assert.ok(capturedOnCopy);
+	capturedOnCopy?.();
+	await new Promise((r) => setTimeout(r, 0)); // let the copy promise resolve
+	assert.deepEqual(calls, ["show"]);
+	assert.ok(renders >= 1);
+	controller.teardown(); // clears the pending feedback timer (no dangling handle)
 });

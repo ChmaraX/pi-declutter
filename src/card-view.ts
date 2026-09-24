@@ -10,15 +10,13 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import {
 	type CardExpansion,
-	type CardModel,
 	type CardShapeModel,
 	expandRowMapToVisual,
 	groupHasMembersToggle,
-	type PersistedCardData,
 	shapeCard,
 	spinnerFrame,
-	staleCardShapeModel,
 } from "./card-shape.ts";
+import { type CardModel, type PersistedCardData, staleCardShapeModel } from "./card-model.ts";
 import { styleLine } from "./styling.ts";
 
 // The card renders inside a Box with vertical padding 1, so its first content

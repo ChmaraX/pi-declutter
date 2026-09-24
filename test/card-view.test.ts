@@ -14,7 +14,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { CardModel, ShapeItem } from "../src/card-shape.ts";
+import type { CardModel } from "../src/card-model.ts";
+import type { ShapeItem } from "../src/card-shape.ts";
 import {
 	ActivityCard,
 	type CardBox,

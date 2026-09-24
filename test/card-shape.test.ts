@@ -40,19 +40,15 @@ import {
 	narrationNodeId,
 	narrationTexts,
 	parseNodeId,
-	type PersistedCardData,
 	previewLines,
 	type ShapeGroup,
 	type ShapeItem,
 	type ShapeNarration,
 	type ShapeThought,
 	shapeCard,
-	shouldReappendCard,
 	SPINNER_FRAMES,
 	SPINNER_INTERVAL_MS,
 	spinnerFrame,
-	staleCardShapeModel,
-	suppressThinkingMarkdown,
 	thoughtHasBox,
 	thoughtNodeId,
 	toolGlyph,
@@ -696,31 +692,6 @@ test("a command with no output is still openable (chevron); its content lives in
 	assert.ok(!render(m, ALL_OPEN).some((l) => l.includes("┌ Shell") || l.includes("$ git status")));
 });
 
-// ── Native thinking suppression (tickets 20 + 22) ───────────────────────────────
-// suppressThinkingMarkdown is the pure decision behind the markdown transformer
-// src/index.ts registers. Locking it here guards ticket 22's lever 1: returning
-// "" for "assistant-thinking" is what makes pi's Markdown render ZERO lines for
-// the native thinking body (verified against pi-tui markdown.js — a transformed
-// text that trims to empty early-returns []). Everything else must pass through
-// byte-for-byte so real answer/user markdown is never altered.
-test("suppressThinkingMarkdown blanks assistant-thinking to a zero-line-rendering empty string", () => {
-	const blanked = suppressThinkingMarkdown("**Planning the approach**\nstep two", "assistant-thinking");
-	assert.equal(blanked, "");
-	// pi's Markdown.render early-returns [] iff the transformed text trims to empty;
-	// "" satisfies that (the whole point of lever 1), so assert the trim contract.
-	assert.equal(blanked.trim(), "");
-});
-
-test("suppressThinkingMarkdown passes non-thinking markdown through byte-for-byte", () => {
-	const answer = "Here is the **final** answer.\n\n- a\n- b";
-	assert.equal(suppressThinkingMarkdown(answer, "assistant"), answer);
-	assert.equal(suppressThinkingMarkdown(answer, "user"), answer);
-	// An unknown/empty message type is treated as non-thinking (never blanked).
-	assert.equal(suppressThinkingMarkdown(answer, ""), answer);
-	// Empty thinking stays empty (already renders nothing); no crash on empty input.
-	assert.equal(suppressThinkingMarkdown("", "assistant-thinking"), "");
-});
-
 // ── Hover affordance (ticket 24) ────────────────────────────────────────────────
 // shapeCard takes an optional hoveredNode: the PRIMARY row whose node id matches
 // is marked `hovered` (the Component bolds it) and its chevron is bumped to
@@ -783,73 +754,6 @@ test("a full-collapsed card can still hover its header row", () => {
 	assert.equal(shaped.lines[0].segments.at(-1)?.tone, "accent");
 });
 
-// ── Compaction survival + stale-snapshot shaping (ticket 25) ────────────────────
-// The card model is stored by reference on the appended session entry but its data
-// is serialized ONCE at append time (session-manager _persist), so a card appended
-// EARLY (live, empty) leaves a stale {live:true, workedMs:0, entries:[]} line on
-// disk that a plain /resume renders. staleCardShapeModel renders that snapshot as
-// SETTLED and never a ticking ghost; shouldReappendCard decides whether a compaction
-// (which drops entries before firstKeptEntryId from the rebuilt chat) requires a
-// fresh card so the response stays visible.
-
-test("staleCardShapeModel renders a mid-response snapshot settled with an unknown duration", () => {
-	// The exact owner-audited stale line: appended live, never re-serialized.
-	const data: PersistedCardData = { live: true, workedMs: 0, failures: 0, entries: [] };
-	const shaped = staleCardShapeModel(data);
-	assert.equal(shaped.live, false); // never a ticking ghost
-	assert.equal(shaped.unknownDuration, true); // "Worked for —"
-	assert.deepEqual(render(shaped), ["Worked for — ▾"]);
-});
-
-test("staleCardShapeModel keeps a genuinely settled snapshot's duration and entries", () => {
-	const data: PersistedCardData = { live: false, workedMs: 39000, failures: 2, entries: [ge(cmds)] };
-	const shaped = staleCardShapeModel(data);
-	assert.equal(shaped.live, false);
-	assert.equal(shaped.unknownDuration, false); // real workedMs → no "—"
-	assert.equal(shaped.failures, 2);
-	assert.deepEqual(render(shaped), ["Worked for 39s · 2 failed ▾", "  • Ran commands · 2 commands ▸"]);
-});
-
-test("staleCardShapeModel treats a live snapshot that DID record time as settled (not a ghost)", () => {
-	// Defensive: a live snapshot with a non-zero workedMs is still rendered settled
-	// (live:false) — the resume has no timer, so a "⟳ Working" header would freeze.
-	const shaped = staleCardShapeModel({ live: true, workedMs: 5000, entries: [] });
-	assert.equal(shaped.live, false);
-	assert.equal(shaped.unknownDuration, false);
-	assert.equal(render(shaped)[0], "Worked for 5s ▾");
-});
-
-test("staleCardShapeModel tolerates a malformed snapshot (missing/!array fields)", () => {
-	const shaped = staleCardShapeModel({} as PersistedCardData);
-	assert.equal(shaped.live, false);
-	assert.equal(shaped.unknownDuration, false); // workedMs defaults 0 but live is falsy
-	assert.deepEqual(shaped.entries, []);
-	assert.deepEqual(render(shaped), ["Worked for 0s ▾"]);
-});
-
-test("shouldReappendCard re-appends only a DROPPED, not-yet-reappended card", () => {
-	// Dropped by compaction (id absent from the kept context) and untouched → re-append.
-	assert.equal(
-		shouldReappendCard({ lastCardEntryId: "card1", survivingEntryIds: ["comp", "kept1"], alreadyReappended: false }),
-		true,
-	);
-	// Survived the compaction (still in the kept context) → do NOT re-append.
-	assert.equal(
-		shouldReappendCard({ lastCardEntryId: "card1", survivingEntryIds: ["comp", "card1", "kept1"], alreadyReappended: false }),
-		false,
-	);
-	// Already re-appended once → never a second card for the same response (dedup).
-	assert.equal(
-		shouldReappendCard({ lastCardEntryId: "card1", survivingEntryIds: ["comp"], alreadyReappended: true }),
-		false,
-	);
-	// No card was ever appended → nothing to survive.
-	assert.equal(
-		shouldReappendCard({ lastCardEntryId: undefined, survivingEntryIds: [], alreadyReappended: false }),
-		false,
-	);
-});
-
 // ── Interrupted marker (ticket 32) ──────────────────────────────────────────────
 // A card force-settled on an abnormal end (stream error / user Esc abort) carries
 // interrupted:true, so its settled header says "· interrupted" (dim/warn tone)
@@ -886,14 +790,4 @@ test("interrupted preserves the flushed open-thinking entry in its box (force-se
 	// tail now lives in the modal, not inline.
 	assert.ok(lines.some((l) => l.includes("· Thought 3s · inspecting events controller") && l.endsWith("▸")));
 	assert.ok(!lines.some((l) => l.includes("Inspecting events controller and queue setup")));
-});
-
-test("staleCardShapeModel propagates interrupted so a resumed interrupted card keeps the marker", () => {
-	// Ticket 32 point 4: registry/compaction survival applies to interrupted cards.
-	const data: PersistedCardData = { live: false, workedMs: 39000, failures: 0, entries: [], interrupted: true };
-	const shaped = staleCardShapeModel(data);
-	assert.equal(shaped.interrupted, true);
-	assert.equal(render(shaped)[0], "Worked for 39s · interrupted ▾");
-	// A non-interrupted snapshot never gains the marker.
-	assert.equal(staleCardShapeModel({ live: false, workedMs: 1000, entries: [] }).interrupted, false);
 });

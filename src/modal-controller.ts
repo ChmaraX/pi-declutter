@@ -3,7 +3,8 @@
 // open→swap→close sequencing is unit-testable with a fake UI context.
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { CardEntry, CardModel, ShapeItem } from "./card-shape.ts";
+import type { CardModel } from "./card-model.ts";
+import type { CardEntry, ShapeItem } from "./card-shape.ts";
 import { itemModalContent, type ModalContent, narrationModalContent, thoughtModalContent } from "./modal.ts";
 
 /** A live modal component the controller shows in the overlay. Kept as an

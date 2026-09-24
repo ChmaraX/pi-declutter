@@ -136,22 +136,24 @@ import {
 import {
 	type CardEntry,
 	type CardExpansion,
-	type CardModel,
 	type CardShapeModel,
 	expandRowMapToVisual,
 	groupHasMembersToggle,
 	hoveredNodeAt,
 	narrationTexts,
 	parseNodeId,
-	type PersistedCardData,
 	previewLines,
 	shapeCard,
-	shouldReappendCard,
-	staleCardShapeModel,
 	type ShapeItem,
 	spinnerFrame,
-	suppressThinkingMarkdown,
 } from "./card-shape.ts";
+import {
+	type CardModel,
+	type PersistedCardData,
+	shouldReappendCard,
+	staleCardShapeModel,
+	suppressThinkingMarkdown,
+} from "./card-model.ts";
 import { Grouper, shouldTick } from "./grouping.ts";
 import { classifyThinkingSpan } from "./span-classify.ts";
 import {

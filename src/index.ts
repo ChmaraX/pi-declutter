@@ -1435,6 +1435,34 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// The leading-Spacer patch is acquired lazily on the first assistant message
 		// (tryPatchLivePrototype) once a live component exists — a component is mounted
 		// only after a message starts, so there is nothing to patch here yet.
+
+		// Re-hide folded narration after ANY rebuild that re-activates the extension
+		// (owner bug: /reload showed every folded paragraph natively again). The
+		// rebuilt tree renders the ORIGINAL un-blanked stored messages, and a reload
+		// also threw away the old runtime's hide registry. Collect known narration
+		// from every persisted card entry — an in-process /reload keeps the live
+		// mutated card data objects, so this is complete there. (A cross-process
+		// /resume still has empty snapshots — known open limitation.) The tree may
+		// not be mounted yet at session_start, so retry on a short back-off;
+		// idempotent + render-only, so extra sweeps are harmless.
+		const sweepNarration = (): void => {
+			try {
+				const texts = new Set<string>();
+				for (const entry of ctx.sessionManager.getEntries()) {
+					if (entry.type !== "custom") continue;
+					const custom = entry as CustomEntry<CardModel>;
+					if (custom.customType !== CARD_TYPE) continue;
+					for (const t of narrationTexts(custom.data?.entries ?? [])) texts.add(t);
+				}
+				if (texts.size === 0 || !runtime.tui) return;
+				if (rehideNarrationAfterRebuild(runtime.tui, texts) > 0) runtime.tui.requestRender();
+			} catch {
+				// Fail open: narration stays visible natively (never lost, only doubled).
+			}
+		};
+		sweepNarration();
+		setTimeout(sweepNarration, 150);
+		setTimeout(sweepNarration, 600);
 	});
 
 	pi.on("message_start", (event: MessageStartEvent, ctx: ExtensionContext) => {

@@ -492,12 +492,26 @@ node --test test/*.test.ts
 
 - `src/index.ts` — the extension entry point: flag/command/renderer/shortcut
   registration, per-response ledger + grouper wiring, event handlers, the
-  live-and-settle activity card (appended early, mutated in place, frozen at
-  settle), narration confirm/promote/restore glue, the tool-absorption `Set` +
-  its acquisition wiring, a zero-line widget that captures the
-  `tui.requestRender()` handle, and the regular-mode mouse dispatch (SGR
-  packet parsing + synthesized click/hover dispatch + row-map resolution).
-  Delegates cohesive subsystems to the controllers/views below.
+  live-and-settle activity card lifecycle (appended early, mutated in place,
+  frozen at settle), the tool-absorption `Set` + its acquisition wiring, and
+  a zero-line widget that captures the `tui.requestRender()` handle.
+  Delegates every cohesive subsystem to the controllers/views below.
+- `src/mouse-controller.ts` — `MouseController`: regular-mode mouse dispatch
+  (enable/disable escape sequences, SGR packet routing via `mouse.ts`,
+  synthesized click/hover dispatch into the retained tree, last-move-hit
+  commit). Unit-tested in `test/mouse-controller.test.ts`.
+- `src/card-view.ts` — the `ActivityCard` component + card view state
+  (per-card expansion, hover state, row-map registration for click
+  resolution). Unit-tested in `test/card-view.test.ts`.
+- `src/narration-controller.ts` — `NarrationController`: the whole narration
+  lifecycle in one place — pending capture at `text_end`, confirm-hide when
+  activity follows, promotion restore at settle, rebuild re-hide sweeps.
+  Orchestrates the pure pieces in `grouping.ts`/`card-shape.ts`/`patches.ts`.
+  Unit-tested in `test/narration-controller.test.ts`.
+- `src/card-model.ts` — persistence/model policy split out of card-shape:
+  `CardModel`/`PersistedCardData`, `staleCardShapeModel`,
+  `shouldReappendCard`, and the `suppressThinkingMarkdown` transformer
+  decision. Unit-tested in `test/card-model.test.ts`.
 - `src/patch-controller.ts` — `PatchController`: the guarded leading-Spacer
   patch lifecycle (lazy live-instance acquisition, `/activity-patch` status,
   teardown). State machine unit-tested in `test/patch-controller.test.ts`.

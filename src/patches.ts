@@ -107,26 +107,6 @@ export interface RawContentBlock {
 	thinking?: string;
 }
 
-/**
- * True when a message's ONLY visible raw content is thinking — i.e. it has a
- * non-empty thinking block and NO non-empty text block. This mirrors pi's own
- * `hasVisibleContent` computation (`assistant-message.js:74-76`) split into its
- * two halves: for such a message the leading Spacer pi adds is a pure blank once
- * our transformer suppresses the thinking body, so it is safe to drop. A message
- * with visible text keeps its spacer (legitimate paragraph spacing).
- */
-export function onlyVisibleThinking(content: readonly RawContentBlock[]): boolean {
-	let hasThinking = false;
-	let hasText = false;
-	for (const block of content) {
-		if (block.type === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-			hasText = true;
-		} else if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim() !== "") {
-			hasThinking = true;
-		}
-	}
-	return hasThinking && !hasText;
-}
 
 /**
  * WHITESPACE-NORMALIZED source substrings that fingerprint the pi 0.85.1
@@ -347,37 +327,50 @@ export function isAssistantMessageComponentLike(value: unknown): value is PatchT
 }
 
 /**
- * Walk the live component tree from `root` (the captured TUI handle) and return
- * every AssistantMessageComponent-like instance, in tree order. Mirrors
- * pi-cc-extensions' component walk: descend `value.children` and
- * `value.getMountedRoots?.()`, guarding cycles with a `seen` set. Pure and
- * dependency-free — identity is duck-typed, so it works against the bundle.
+ * Shared guarded walk over a live component tree: descend `children` arrays and
+ * `getMountedRoots?.()`, cycle-guarded by a seen-set, never throwing into pi
+ * (mid-switch renderers may briefly have no mounted roots). `visit` runs for
+ * every non-array object node; returning true STOPS the walk (early exit for
+ * single-instance searches). One walker instead of per-caller copies \u2014 the
+ * copies had already drifted subtly (early-stop vs full walk), which is exactly
+ * the divergence this prevents.
+ */
+export function walkTree(root: unknown, visit: (node: object) => boolean | undefined): void {
+	const seen = new Set<unknown>();
+	let stopped = false;
+	const step = (value: unknown): void => {
+		if (stopped || !value || typeof value !== "object" || seen.has(value)) return;
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const child of value) step(child);
+			return;
+		}
+		if (visit(value) === true) {
+			stopped = true;
+			return;
+		}
+		const children = (value as { children?: unknown }).children;
+		if (Array.isArray(children)) for (const child of children) step(child);
+		try {
+			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
+			if (Array.isArray(mounted)) for (const r of mounted) step(r);
+		} catch {
+			// mid-switch renderer; ignore
+		}
+	};
+	step(root);
+}
+
+/**
+ * Every AssistantMessageComponent-like instance under `root`, in tree order.
+ * Duck-typed identity, so it works against the bundle.
  */
 export function findAssistantMessageComponents(root: unknown): PatchTargetInstance[] {
 	const found: PatchTargetInstance[] = [];
-	const seen = new Set<unknown>();
-	const visit = (value: unknown): void => {
-		if (!value || typeof value !== "object" || seen.has(value)) return;
-		seen.add(value);
-		if (Array.isArray(value)) {
-			for (const child of value) visit(child);
-			return;
-		}
-		if (isAssistantMessageComponentLike(value)) found.push(value);
-		const children = (value as { children?: unknown }).children;
-		if (Array.isArray(children)) {
-			for (const child of children) visit(child);
-		}
-		try {
-			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
-			if (Array.isArray(mounted)) {
-				for (const r of mounted) visit(r);
-			}
-		} catch {
-			// A renderer mid-switch may briefly have no mounted roots; ignore.
-		}
-	};
-	visit(root);
+	walkTree(root, (node) => {
+		if (isAssistantMessageComponentLike(node)) found.push(node);
+		return undefined;
+	});
 	return found;
 }
 
@@ -856,25 +849,10 @@ export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: 
  */
 export function collectToolExecutionIds(root: unknown): string[] {
 	const ids: string[] = [];
-	const seen = new Set<unknown>();
-	const visit = (value: unknown): void => {
-		if (!value || typeof value !== "object" || seen.has(value)) return;
-		seen.add(value);
-		if (Array.isArray(value)) {
-			for (const child of value) visit(child);
-			return;
-		}
-		if (isToolExecutionComponentLike(value)) ids.push((value as { toolCallId: string }).toolCallId);
-		const children = (value as { children?: unknown }).children;
-		if (Array.isArray(children)) for (const child of children) visit(child);
-		try {
-			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
-			if (Array.isArray(mounted)) for (const r of mounted) visit(r);
-		} catch {
-			// mid-switch renderer; ignore
-		}
-	};
-	visit(root);
+	walkTree(root, (node) => {
+		if (isToolExecutionComponentLike(node)) ids.push((node as { toolCallId: string }).toolCallId);
+		return undefined;
+	});
 	return ids;
 }
 
@@ -890,29 +868,14 @@ export interface ToolRowPatchResult {
  * session may not be mounted yet when the extension's handler runs.
  */
 export function acquireToolRowHidePatch(root: unknown, isAbsorbed: (toolCallId: string) => boolean): ToolRowPatchResult {
-	const seen = new Set<unknown>();
 	let instance: object | undefined;
-	const visit = (value: unknown): void => {
-		if (instance || !value || typeof value !== "object" || seen.has(value)) return;
-		seen.add(value);
-		if (Array.isArray(value)) {
-			for (const child of value) visit(child);
-			return;
+	walkTree(root, (node) => {
+		if (isToolExecutionComponentLike(node)) {
+			instance = node;
+			return true; // early exit: one instance is enough to reach the prototype
 		}
-		if (isToolExecutionComponentLike(value)) {
-			instance = value;
-			return;
-		}
-		const children = (value as { children?: unknown }).children;
-		if (Array.isArray(children)) for (const child of children) visit(child);
-		try {
-			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
-			if (Array.isArray(mounted)) for (const r of mounted) visit(r);
-		} catch {
-			// mid-switch renderer; ignore
-		}
-	};
-	visit(root);
+		return undefined;
+	});
 	if (!instance) return { installed: false, reason: "no live ToolExecutionComponent found yet" };
 	const proto = Object.getPrototypeOf(instance) as object | null;
 	if (!proto) return { installed: false, reason: "instance has no prototype" };
@@ -980,6 +943,60 @@ export function installToolMountHook(root: unknown, onMount: (instance: object) 
 			return original.call(this, child, ...rest);
 		};
 		Object.defineProperty(p, TOOL_MOUNT_HOOK_MARKER, { value: true, enumerable: false, configurable: true });
+	} catch {
+		return false;
+	}
+	return true;
+}
+
+// ── Click-away modal close (owner request; moved here from index.ts so ALL
+// runtime patches live under one guard contract) ────────────────────────────────
+//
+// pi-tui routes a click that misses every overlay past the overlay layer
+// (hit:false) straight into the transcript — an open modal never sees it.
+// Wrap the live TUI INSTANCE's dispatchMouseToOverlay (instance property only,
+// no prototype touched): an outside click while the modal is open closes it and
+// swallows the click so it cannot also toggle a row underneath. The callbacks
+// live in instance slots that install always rewrites, so a /reload's fresh
+// runtime rebinds the existing wrap (same pattern as the other patches).
+// Fail-open: without the method, Esc/q keep working exactly as before.
+
+const CLICK_AWAY_MARKER = "__activityFeedClickAway";
+const CLICK_AWAY_CB = "__activityFeedClickAwayCb";
+
+export interface ClickAwayDeps {
+	isModalOpen(): boolean;
+	closeModal(): void;
+}
+
+export function installClickAwayClosePatch(tuiHandle: unknown, deps: ClickAwayDeps): boolean {
+	const tui = tuiHandle as {
+		dispatchMouseToOverlay?: (event: unknown) => { hit: boolean } | undefined;
+		requestRender?: () => void;
+		[CLICK_AWAY_MARKER]?: unknown;
+		[CLICK_AWAY_CB]?: unknown;
+	} | undefined;
+	if (!tui || typeof tui.dispatchMouseToOverlay !== "function") return false;
+	try {
+		Object.defineProperty(tui, CLICK_AWAY_CB, { value: deps, enumerable: false, configurable: true, writable: true });
+	} catch {
+		return false;
+	}
+	if (tui[CLICK_AWAY_MARKER]) return true; // wrapped already; rebind above sufficed
+	const original = tui.dispatchMouseToOverlay.bind(tui);
+	try {
+		tui.dispatchMouseToOverlay = (event: unknown) => {
+			const out = original(event);
+			const type = (event as { type?: unknown } | undefined)?.type;
+			const cb = tui[CLICK_AWAY_CB] as ClickAwayDeps | undefined;
+			if (out && out.hit === false && type === "click" && cb?.isModalOpen()) {
+				cb.closeModal();
+				tui.requestRender?.();
+				return { hit: true };
+			}
+			return out;
+		};
+		Object.defineProperty(tui, CLICK_AWAY_MARKER, { value: true, enumerable: false, configurable: true });
 	} catch {
 		return false;
 	}

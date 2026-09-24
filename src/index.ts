@@ -158,6 +158,7 @@ import {
 	acquireToolRowHidePatch,
 	collectToolExecutionIds,
 	dumpTranscriptTree,
+	installClickAwayClosePatch,
 	installToolMountHook,
 	installToolRowHidePatch,
 	findAssistantMessageComponents,
@@ -335,6 +336,15 @@ function readFullOutput(item: ShapeItem): string | undefined {
 interface CardView {
 	fullCollapsed: boolean;
 	membersVisible: Set<number>;
+}
+
+/** One retroactively hidden (or hideable) narration text block: the live
+ * component instance, which content block, and the trimmed text (used for
+ * rebuild re-hides and promotion restore). */
+interface NarrationHide {
+	instance: PatchTargetInstance;
+	contentIndex: number;
+	text: string;
 }
 
 interface ViewState {
@@ -583,11 +593,11 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// settles, it was the true final answer \u2014 never touched, stays visible exactly
 	// as pi always rendered it. Cleared on every confirm-or-reset boundary so a
 	// stale reference never leaks into the next response.
-	let pendingNarration: { instance: PatchTargetInstance; contentIndex: number; text: string } | undefined;
+	let pendingNarration: NarrationHide | undefined;
 	/** Every narration hide of the CURRENT response, in confirm order (ticket 41
 	 * promotion): when finalize() promotes the last narration back out as the
 	 * answer, the matching record restores its native text block. */
-	let narrationHides: { instance: PatchTargetInstance; contentIndex: number; text: string }[] = [];
+	let narrationHides: NarrationHide[] = [];
 
 	// Tool-call ids whose native rows the card absorbs (session-lived; never
 	// cleared \u2014 a hidden row must stay hidden for the transcript's life). Ids are
@@ -610,12 +620,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// written only by commitHover (the render throttle) and cleared on leave/settle/
 	// teardown. Empty while the mouse is off every card or --no-activity-mouse is set.
 	const hover: HoverState = {};
-	// During a synthesized regular-mode move dispatch the resolved card/node are
-	// stashed here (onCardMouse can't return a value up through handleMouse); the
-	// caller commits them after so a move that hit NO card clears hover (leave).
-	let inSyntheticMove = false;
-	let synthMoveCardId: string | undefined;
-	let synthMoveNodeId: string | undefined;
+	// Last move hit recorded by onCardMouse (it can't return a value up through
+	// handleMouse). A synthesized regular-mode dispatch clears this, dispatches,
+	// then commits it — so a move that hit NO card clears hover (leave). The
+	// fullscreen path commits directly inside onCardMouse; the record is unused
+	// there and harmless.
+	let lastMoveHit: { cardId: string; nodeId: string | undefined } | undefined;
+	function readLastMoveHit(): typeof lastMoveHit {
+		return lastMoveHit;
+	}
 
 	// The live card model for the CURRENT response (ticket 11). Appended on the
 	// first tool_execution_start, mutated as tools run, frozen at settle. Undefined
@@ -664,6 +677,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	function captureCtx(ctx: ExtensionContext): void {
 		if (hasLiveUI(ctx)) uiCtx = ctx;
 	}
+
+	/** pi.on with captureCtx baked in — every handler needs the live ctx first,
+	 * and copy-pasting captureCtx(ctx) as line one of 13 handlers invited drift.
+	 * Typed as pi.on itself so per-event handler types survive the wrap. */
+	const on: typeof pi.on = (name: never, handler: never) =>
+		pi.on(name, ((event: never, ctx: ExtensionContext) => {
+			captureCtx(ctx);
+			return (handler as (e: never, c: ExtensionContext) => unknown)(event, ctx);
+		}) as never);
 
 	/** Start a fresh agent response. Absorbed rows persist (session-lived set).
 	 *
@@ -776,44 +798,28 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// other display extensions). Fail-open: while the patch is not installed,
 	// rows render natively (pi default) \u2014 noisier but fully functional.
 	let toolRowPatchInstalled = false;
+	/** FALLBACK acquisition only (called from the session_start sweep). The
+	 * PRIMARY mechanism is the mount hook below: installToolMountHook patches +
+	 * absorbs at addChild time, before a component's first render. This fallback
+	 * exists solely for a rebuilt tree that already contains tool components
+	 * when the sweep runs (post-/reload) \u2014 the mount hook never saw those. */
 	function tryAcquireToolRowPatch(): void {
 		if (toolRowPatchInstalled || !runtime.tui) return;
 		const result = acquireToolRowHidePatch(runtime.tui, (id) => absorbed.has(id));
 		if (result.installed) toolRowPatchInstalled = true;
 	}
 
-	// \u2500\u2500 Click-away modal close (owner request) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-	// pi-tui routes a click OUTSIDE every overlay past the overlay layer (hit:
-	// false) straight into the transcript \u2014 the modal never sees it. Wrap the
-	// captured TUI INSTANCE's dispatchMouseToOverlay (feature-detected, instance
-	// property only \u2014 no prototype touched): when a click misses all overlays
-	// while our modal is open, close the modal and swallow the click so it can't
-	// also toggle whatever row happened to sit underneath. Fail-open: without the
-	// method, Esc/q keep working exactly as before.
+	// ── Click-away modal close ── the patch itself lives in patches.ts under the
+	// shared guard contract; this wires the live deps lazily (idempotent,
+	// rebind-safe — see installClickAwayClosePatch).
 	let clickAwayInstalled = false;
+	let mountHookInstalled = false;
 	function installClickAwayClose(): void {
 		if (clickAwayInstalled) return;
-		const tui = runtime.tui as unknown as {
-			dispatchMouseToOverlay?: (event: unknown) => { hit: boolean } | undefined;
-			requestRender?: () => void;
-		} | undefined;
-		if (!tui || typeof tui.dispatchMouseToOverlay !== "function") return;
-		const original = tui.dispatchMouseToOverlay.bind(tui);
-		try {
-			tui.dispatchMouseToOverlay = (event: unknown) => {
-				const out = original(event);
-				const type = (event as { type?: unknown } | undefined)?.type;
-				if (out && out.hit === false && type === "click" && modalController.isOpen()) {
-					modalController.closeModal();
-					tui.requestRender?.();
-					return { hit: true };
-				}
-				return out;
-			};
-			clickAwayInstalled = true;
-		} catch {
-			// Instance not writable \u2014 keep keyboard-only close.
-		}
+		clickAwayInstalled = installClickAwayClosePatch(runtime.tui, {
+			isModalOpen: () => modalController.isOpen(),
+			closeModal: () => modalController.closeModal(),
+		});
 	}
 
 	// ── Live card plumbing (ticket 11) ────────────────────────────────────────
@@ -1019,17 +1025,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		const rowIndex = event.y - CARD_BOX_PADDING_Y;
 		const node = rowMap ? hoveredNodeAt(rowMap, rowIndex) : undefined;
 
-		// Hover (ticket 24): a move over this card sets the hovered node (or clears it
-		// on the card's own padding rows). In a synthesized regular-mode dispatch the
-		// result is stashed for the caller to commit (so a move over NO card can clear
-		// hover); fullscreen routes moves here natively, so commit directly.
+		// Hover (ticket 24): a move over this card sets the hovered node (or clears
+		// it on the card's own padding rows). Always record AND commit — the
+		// synthesized regular-mode caller re-commits the record afterwards (same
+		// values, idempotent) so a move over NO card can clear hover; fullscreen
+		// gets the direct commit.
 		if (event.type === "move") {
-			if (inSyntheticMove) {
-				synthMoveCardId = id;
-				synthMoveNodeId = node;
-			} else {
-				commitHover(id, node);
-			}
+			lastMoveHit = { cardId: id, nodeId: node };
+			commitHover(id, node);
 			return { handled: true, render: false };
 		}
 
@@ -1147,51 +1150,21 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	 * lands on no card, the stash stays undefined and commitHover clears the hover
 	 * (leave). Renders only when the hovered node actually changed.
 	 */
-	function resolveHoverToCard(tui: RegularTui, packet: MousePacket): void {
-		const state = tui.captureRenderState?.();
-		const handleMouse = tui.handleMouse;
-		if (!state || typeof handleMouse !== "function") return;
+	/** Build the synthesized TuiMouseEvent both regular-mode resolvers dispatch
+	 * (shared shape — SGR rows/cols are 1-based in the viewport; viewportTop is
+	 * the buffer index of the topmost visible line). Undefined when the point is
+	 * outside the rendered buffer. */
+	function synthesizeMouseEvent(
+		state: TuiMainScreenRenderState,
+		packet: MousePacket,
+		type: "move" | "press",
+	): TuiMouseEvent | undefined {
 		const contentY = state.previousViewportTop + (packet.row - 1);
-		synthMoveCardId = undefined;
-		synthMoveNodeId = undefined;
-		inSyntheticMove = true;
-		try {
-			if (contentY >= 0 && contentY < state.previousLines.length) {
-				const x = Math.max(0, packet.col - 1);
-				const event: TuiMouseEvent = {
-					type: "move",
-					button: "none",
-					x,
-					y: contentY,
-					screenX: x,
-					screenY: contentY,
-					width: state.previousWidth || 0,
-					height: state.previousLines.length,
-					shift: (packet.code & 4) !== 0,
-					alt: (packet.code & 8) !== 0,
-					ctrl: (packet.code & 16) !== 0,
-				};
-				handleMouse.call(tui, event);
-			}
-		} finally {
-			inSyntheticMove = false;
-		}
-		commitHover(synthMoveCardId, synthMoveNodeId);
-	}
-
-	function resolveClickToCard(tui: RegularTui, packet: MousePacket): boolean {
-		const state = tui.captureRenderState?.();
-		const handleMouse = tui.handleMouse;
-		if (!state || typeof handleMouse !== "function") return false;
-		// SGR rows/cols are 1-based within the visible viewport; previousViewportTop is
-		// the buffer index of the topmost visible line (tui-main-screen.js), so the full
-		// content row of the click is viewportTop + (row - 1).
-		const contentY = state.previousViewportTop + (packet.row - 1);
-		if (contentY < 0 || contentY >= state.previousLines.length) return false;
+		if (contentY < 0 || contentY >= state.previousLines.length) return undefined;
 		const x = Math.max(0, packet.col - 1);
-		const event: TuiMouseEvent = {
-			type: "press",
-			button: "left",
+		return {
+			type,
+			button: type === "press" ? "left" : "none",
 			x,
 			y: contentY,
 			screenX: x,
@@ -1201,8 +1174,30 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			shift: (packet.code & 4) !== 0,
 			alt: (packet.code & 8) !== 0,
 			ctrl: (packet.code & 16) !== 0,
-			clickCount: 1,
+			...(type === "press" ? { clickCount: 1 } : {}),
 		};
+	}
+
+	function resolveHoverToCard(tui: RegularTui, packet: MousePacket): void {
+		const state = tui.captureRenderState?.();
+		const handleMouse = tui.handleMouse;
+		if (!state || typeof handleMouse !== "function") return;
+		lastMoveHit = undefined;
+		const event = synthesizeMouseEvent(state, packet, "move");
+		if (event) handleMouse.call(tui, event);
+		// Commit whatever the dispatch recorded — undefined (no card hit) clears
+		// the hover (leave); a hit re-commits the same values (idempotent). Read
+		// through a function so TS doesn't narrow past the indirect write above.
+		const hit = readLastMoveHit();
+		commitHover(hit?.cardId, hit?.nodeId);
+	}
+
+	function resolveClickToCard(tui: RegularTui, packet: MousePacket): boolean {
+		const state = tui.captureRenderState?.();
+		const handleMouse = tui.handleMouse;
+		if (!state || typeof handleMouse !== "function") return false;
+		const event = synthesizeMouseEvent(state, packet, "press");
+		if (!event) return false;
 		// The retained tree resolves y → component by summed child heights (Container
 		// mouseLayout), routing to the clicked card's MouseRegion → onCardMouse.
 		return Boolean(handleMouse.call(tui, event));
@@ -1412,14 +1407,18 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// `/activity-patch` prints the live patch status {active, reason} so activation
 	// is checkable in a real pane (the false-green ticket-30 failure was invisible).
 	pi.registerCommand("activity-patch", {
-		description: "Show the activity-feed blank-line patch status (active/reason)",
+		description: "Show the status of all four activity-feed runtime hooks",
 		handler: async (_args, ctx) => {
-			const status = patchController.getStatus();
-			const state = status.active
-				? "active — leading blank suppressed on the live AssistantMessageComponent"
-				: `inactive (${status.reason ?? "unknown"})`;
+			const spacer = patchController.getStatus();
+			const lines = [
+				`spacer patch: ${spacer.active ? "active" : `inactive (${spacer.reason ?? "unknown"})`}`,
+				`tool-row hide patch: ${toolRowPatchInstalled ? "active" : "not yet acquired (fail-open: native rows show)"}`,
+				`tool mount hook: ${mountHookInstalled ? "active" : "not installed (fallback acquisition covers)"}`,
+				`click-away close: ${clickAwayInstalled ? "active" : "not installed (Esc/q close still works)"}`,
+			];
+			const allGood = spacer.active && toolRowPatchInstalled && mountHookInstalled && clickAwayInstalled;
 			try {
-				ctx.ui.notify(`activity-feed patch: ${state}`, status.active ? "info" : "warning");
+				ctx.ui.notify(`activity-feed hooks — ${lines.join(" · ")}`, allGood ? "info" : "warning");
 			} catch {
 				// No UI to notify through; nothing else to do.
 			}
@@ -1427,8 +1426,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	});
 
 	// ── Lifecycle wiring ──────────────────────────────────────────────────────
-	pi.on("session_start", (_event: SessionStartEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("session_start", (_event: SessionStartEvent, ctx: ExtensionContext) => {
 		// Blank the collapsed-thinking placeholder so the ctrl+t-hidden state adds no
 		// visible label either (ticket 20; pairs with the markdown transformer above).
 		if (hasLiveUI(ctx)) ctx.ui.setHiddenThinkingLabel("");
@@ -1461,7 +1459,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// component's first render, so a native tool row never paints even one
 				// frame — covers pi's-handler-first event ordering AND the first tool
 				// of a fresh session (which acquires the render patch from itself).
-				installToolMountHook(runtime.tui, (instance) => {
+				mountHookInstalled = installToolMountHook(runtime.tui, (instance) => {
 					const id = (instance as { toolCallId?: unknown }).toolCallId;
 					if (typeof id === "string") absorbed.add(id);
 					const proto = Object.getPrototypeOf(instance) as object | null;
@@ -1485,16 +1483,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		setTimeout(sweepNarration, 600);
 	});
 
-	pi.on("message_start", (event: MessageStartEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("message_start", (event: MessageStartEvent, ctx: ExtensionContext) => {
 		// The streaming AssistantMessageComponent is created + mounted when an assistant
 		// message starts (interactive-mode message_start). Acquire the live prototype now
 		// so the patch is in place before the message's leading Spacer would persist.
 		if (event.message?.role === "assistant") patchController.tryPatchLivePrototype(ctx);
 	});
 
-	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
 		// A new agent response begins: clear per-response accumulation (which first
 		// force-settles any card still live from an abnormally-ended prior response —
 		// ticket 32 catch-all). The card is appended live on the first tool (ticket 11)
@@ -1511,8 +1507,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// NOW so the "· interrupted" marker shows immediately, rather than waiting for the
 	// retry's agent_start (error) or the trailing agent_settled (abort). Normal
 	// "stop"/"toolUse"/"length" messages are left for agent_settled.
-	pi.on("message_end", (event: MessageEndEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("message_end", (event: MessageEndEvent, ctx: ExtensionContext) => {
 		const message = event.message;
 		if (message?.role === "assistant") settleIfAbnormal((message as { stopReason?: string }).stopReason);
 	});
@@ -1521,8 +1516,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// (agent-loop.js emits it right after the errored/aborted turn_end). A redundant
 	// safety net for the message_end path above — idempotent, so double-settling the
 	// same card is a no-op (forceSettleLingering guards on cardModel.live).
-	pi.on("agent_end", (event: AgentEndEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("agent_end", (event: AgentEndEvent, ctx: ExtensionContext) => {
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const message = event.messages[i];
 			if (message.role === "assistant") {
@@ -1542,8 +1536,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// immediately (agent-session entry_appended → addCustomEntryToChat) and it lands
 	// in the kept context, so it also survives the next /resume. Deduped per source
 	// entry (reappendedFrom) so one response never yields two cards.
-	pi.on("session_compact", (_event: SessionCompactEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("session_compact", (_event: SessionCompactEvent, ctx: ExtensionContext) => {
 		// Re-hide already-folded narration (ticket 41): a compaction rebuild recreates
 		// every AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
 		// (hideMessageTextBlock never touches what's persisted \u2014 the byte-identical-
@@ -1594,16 +1587,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("turn_start", (event: TurnStartEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("turn_start", (event: TurnStartEvent, ctx: ExtensionContext) => {
 		// A turn boundary does NOT break the group (ticket 10): sequential tool-only
 		// turns stay one group. Only anchor the "Worked for Xs" clock on the first
 		// turn_start of the response.
 		if (responseStartMs === 0) responseStartMs = event.timestamp ?? Date.now();
 	});
 
-	pi.on("message_update", (event: MessageUpdateEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("message_update", (event: MessageUpdateEvent, ctx: ExtensionContext) => {
 		// Fallback acquisition (ticket 31): if message_start ran before the streaming
 		// component was mounted (or the walk missed it), retry here — updateContent is
 		// called on every streaming delta, so patching now still catches the message.
@@ -1702,18 +1693,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
 		// Universal tool-row absorption: hide this call's native row from its FIRST
 		// frame (the card is the only view of tool activity \u2014 Codex style). The id
 		// goes into the set BEFORE the component's first render; the render patch
 		// then returns zero rows for it, so nothing paints and nothing collapses
 		// later (no differential-repaint/scrollback concerns at all).
 		absorbed.add(event.toolCallId);
-		// Acquire the ToolExecutionComponent prototype patch as soon as a live
-		// instance exists. This event may run before pi's own UI handler mounts the
-		// component, so tool_execution_end retries too. No-op once installed.
-		tryAcquireToolRowPatch();
 		// A new tool call starting is proof anything pending wasn't the final answer
 		// (ticket 41).
 		confirmNarrationNonFinal();
@@ -1733,15 +1719,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		refreshLive();
 	});
 
-	pi.on("tool_execution_update", (_event: ToolExecutionUpdateEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("tool_execution_update", (_event: ToolExecutionUpdateEvent, ctx: ExtensionContext) => {
 		// Updates don't change the ledger shape; the live elapsed clock is driven
 		// by the timer. Nothing to accumulate here.
 	});
 
-	pi.on("tool_execution_end", (event: ToolExecutionEndEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
-		tryAcquireToolRowPatch();
+	on("tool_execution_end", (event: ToolExecutionEndEvent, ctx: ExtensionContext) => {
 		const call = ledger.get(event.toolCallId);
 		if (call) {
 			call.endMs = Date.now();
@@ -1787,8 +1770,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
 		// A turn ends: do NOT settle and do NOT break the group (ticket 10 —
 		// sequential tool-only turns stay one group; the group only breaks on
 		// assistant text). One card per response is emitted at agent_settled
@@ -1799,12 +1781,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		absorbCurrentRows();
 	});
 
-	pi.on("agent_settled", (_event: AgentSettledEvent, ctx: ExtensionContext) => {
-		captureCtx(ctx);
+	on("agent_settled", (_event: AgentSettledEvent, ctx: ExtensionContext) => {
+		// Every settleResponse path ends in clearLive() (which stops the timer) —
+		// no extra teardown here, so the invariant lives in ONE place.
 		settleResponse();
-		// Safety net: never leave a timer or widget running after a run settles.
-		stopTimer();
-		clearLive();
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent, ctx: ExtensionContext) => {

@@ -31,61 +31,11 @@ import {
 	isLeadingSpacer,
 	LEADING_SPACER_SIGNATURE,
 	matchesLeadingSpacerShape,
-	onlyVisibleThinking,
 	type RawContentBlock,
 	rehideNarrationAfterRebuild,
 	stripSuppressedThinkingSpacers,
 	suppressedThinkingSpacersToRemove,
 } from "../src/patches.ts";
-
-// ── onlyVisibleThinking predicate ────────────────────────────────────────────
-
-test("onlyVisibleThinking: true when the only visible content is thinking", () => {
-	assert.equal(onlyVisibleThinking([{ type: "thinking", thinking: "Planning" }]), true);
-	// thinking + tool call (the ticket-26 shape) — tool blocks are not visible content.
-	assert.equal(
-		onlyVisibleThinking([
-			{ type: "thinking", thinking: "Planning" },
-			{ type: "toolCall" } as RawContentBlock,
-		]),
-		true,
-	);
-	// multiple thinking runs, still no text.
-	assert.equal(
-		onlyVisibleThinking([
-			{ type: "thinking", thinking: "A" },
-			{ type: "toolCall" } as RawContentBlock,
-			{ type: "thinking", thinking: "B" },
-		]),
-		true,
-	);
-	// thinking + a whitespace-only text block is still thinking-only (matches pi's trim()).
-	assert.equal(
-		onlyVisibleThinking([
-			{ type: "thinking", thinking: "A" },
-			{ type: "text", text: "   " },
-		]),
-		true,
-	);
-});
-
-test("onlyVisibleThinking: false when visible text is present (keep normal spacing)", () => {
-	assert.equal(
-		onlyVisibleThinking([
-			{ type: "thinking", thinking: "Planning" },
-			{ type: "text", text: "Answer" },
-		]),
-		false,
-	);
-	assert.equal(onlyVisibleThinking([{ type: "text", text: "Answer" }]), false);
-});
-
-test("onlyVisibleThinking: false for tool-only, empty, and whitespace-thinking messages", () => {
-	assert.equal(onlyVisibleThinking([]), false);
-	assert.equal(onlyVisibleThinking([{ type: "toolCall" } as RawContentBlock]), false);
-	assert.equal(onlyVisibleThinking([{ type: "thinking", thinking: "   " }]), false);
-	assert.equal(onlyVisibleThinking([{ type: "thinking" }]), false);
-});
 
 // ── matchesLeadingSpacerShape fingerprint ────────────────────────────────────
 

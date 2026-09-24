@@ -251,12 +251,6 @@ export function bucketCountsText(calls: ToolCallLike[]): string {
 	return parts.join(", ");
 }
 
-// ── Live counter ──────────────────────────────────────────────────────────────
-// "Exploring · N files, M searches, K commands, T tools" — nonzero buckets only.
-export function liveCounter(calls: ToolCallLike[]): string {
-	const summary = bucketCountsText(calls);
-	return summary ? `Exploring · ${summary}` : "Exploring";
-}
 
 // ── Settled label ──────────────────────────────────────────────────────────────
 // Single member → named target. Otherwise past-tense verb phrases joined ", ".

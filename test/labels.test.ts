@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bucketCountsText, describeCall, describeCallIsGeneric, liveCounter, type ToolCallLike } from "../src/labels.ts";
+import { bucketCountsText, describeCall, describeCallIsGeneric, type ToolCallLike } from "../src/labels.ts";
 
 function call(name: string, args: Record<string, unknown> = {}): ToolCallLike {
 	return { name, arguments: args };
@@ -77,17 +77,3 @@ test("describeCallIsGeneric matches describeCall's 'Used ' prefix across a mixed
 	}
 });
 
-// ── bucketCountsText / liveCounter equivalence (item 2) ───────────────────────
-
-test("bucketCountsText equals liveCounter with its Exploring prefix removed", () => {
-	const sets: ToolCallLike[][] = [
-		[],
-		[call("read", { path: "a" })],
-		[call("read"), call("read"), call("grep")],
-		[call("bash"), call("bash"), call("read"), call("mystery")],
-	];
-	for (const calls of sets) {
-		const stripped = liveCounter(calls).replace(/^Exploring(?: · )?/, "");
-		assert.equal(bucketCountsText(calls), stripped);
-	}
-});

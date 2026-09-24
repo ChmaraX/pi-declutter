@@ -171,9 +171,32 @@ import { MouseController } from "./mouse-controller.ts";
 import { bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
 
 import { OutputModal } from "./modal-view.ts";
-import { styleLine } from "./styling.ts";
 import { ModalController } from "./modal-controller.ts";
 import { buildCardEntries, settleAction, type ToolCall, toCallLike } from "./card-build.ts";
+import {
+	ActivityCard,
+	CARD_BOX_PADDING_X,
+	CARD_BOX_PADDING_Y,
+	type CardRenderPrimitives,
+	commitHover as cardViewCommitHover,
+	clearHover as cardViewClearHover,
+	type CardView,
+	getCardView,
+	type HoverState,
+	isAllExpanded,
+	setAllExpanded,
+	type ViewState,
+} from "./card-view.ts";
+
+// The real pi-tui Box/Text factory ActivityCard renders through (ticket 38
+// pattern extended to the card view, review follow-up): card-view.ts declares
+// only the structural CardBox/CardLine contracts so it stays unit-testable
+// without the pi-tui runtime; this is the one place those contracts meet the
+// real components, exactly as they were constructed before the extraction.
+const cardRenderPrimitives: CardRenderPrimitives = {
+	makeBox: (bg) => new Box(1, 1, bg),
+	makeLine: (content) => new Text(content, 0, 0),
+};
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -192,15 +215,10 @@ const TOGGLE_STATUS_MS = 2000;
 // are executing OR a thinking span is active (ticket 23 shouldTick) — the
 // windows the card mutates.
 const LIVE_TICK_MS = 500;
-// The card is rendered inside a Box with vertical padding 1, so its first content
-// line (the header) sits at rendered index 1. A click's card-local y maps to a
-// visual row by subtracting this top padding (ticket 16 mouse mapping).
-const CARD_BOX_PADDING_Y = 1;
-// The same Box has horizontal padding 1 (new Box(1, 1, …)); each child Text is
-// rendered at width − 2×this, which is where line wrapping happens. The row-map is
-// expanded into that wrapped space in ActivityCard.render so clicks on a card whose
-// lines wrap still resolve to the right node (reviewer P1).
-const CARD_BOX_PADDING_X = 1;
+// CARD_BOX_PADDING_Y / CARD_BOX_PADDING_X (mouse-row mapping + wrap-width
+// constants) now live in card-view.ts alongside ActivityCard, which is the only
+// code that renders the Box they describe; onCardMouse below imports
+// CARD_BOX_PADDING_Y for its own y-offset math.
 // Per-thinking-span capture cap (ticket 20): ~2KB is enough for the summary line
 // plus a 10-line tail box; anything beyond is dropped (bounded retention, like
 // the tool-output previews).
@@ -311,21 +329,10 @@ function readFullOutput(item: ShapeItem): string | undefined {
 }
 
 // ── Settled activity card ────────────────────────────────────────────────
-// A live-reading Component: render() consults the per-card expansion state every
-// frame, so a single tui.requestRender() after a per-node click or the toggle
-// shortcut re-renders every card without needing per-entry invalidation (which
-// pi does not expose).
-
-// Per-card expansion state over the top-level entry sequence (tickets 16 + 21).
-// `fullCollapsed` hides everything but the header; otherwise `membersVisible`
-// holds the top-level indices of multi-member group entries showing their
-// members. Output/thinking BOXES are no longer inline (ticket 35) — clicking a
-// member/thought row opens a floating modal instead, so there is no per-box
-// visibility state to track here.
-interface CardView {
-	fullCollapsed: boolean;
-	membersVisible: Set<number>;
-}
+// CardView/ViewState/HoverState, getCardView/isAllExpanded/setAllExpanded, and
+// the ActivityCard render component itself now live in card-view.ts (imported
+// above) — this file keeps only the wiring that owns their instances (`view`,
+// `hover`, `rowMaps` below) and dispatches into them from pi's events.
 
 /** One retroactively hidden (or hideable) narration text block: the live
  * component instance, which content block, and the trimmed text (used for
@@ -336,140 +343,10 @@ interface NarrationHide {
 	text: string;
 }
 
-interface ViewState {
-	/** Per-card tree expansion, keyed by entry id (lazily created). */
-	cards: Map<string, CardView>;
-	/** The card models by entry id, so the keyboard shortcut can enumerate nodes. */
-	models: Map<string, CardModel>;
-	/** Entry ids in first-seen (append) order; the last is the newest card. */
-	order: string[];
-}
-
-/** The card's expansion state, created on first access with the default tree. */
-function getCardView(view: ViewState, id: string): CardView {
-	let cv = view.cards.get(id);
-	if (!cv) {
-		cv = { fullCollapsed: false, membersVisible: new Set() };
-		view.cards.set(id, cv);
-	}
-	return cv;
-}
-
 /** Toggle a value's membership in a set (add if absent, remove if present). */
 function toggleInSet<T>(set: Set<T>, value: T): void {
 	if (set.has(value)) set.delete(value);
 	else set.add(value);
-}
-
-/** True when every expandable node of the card is open (the all-expanded state).
- * With inline boxes gone (ticket 35), "expandable" now means only multi-member
- * group entries showing their members \u2014 thought and narration rows (ticket 41)
- * have no separate expand state, they just open a modal on click. */
-function isAllExpanded(model: CardModel, cv: CardView): boolean {
-	if (cv.fullCollapsed) return false;
-	return model.entries.every((entry, k) => {
-		if (entry.kind !== "group") return true;
-		return !groupHasMembersToggle(entry.group) || cv.membersVisible.has(k);
-	});
-}
-
-/** Open every expandable node (every multi-member group's members). */
-function setAllExpanded(model: CardModel, cv: CardView): void {
-	cv.fullCollapsed = false;
-	cv.membersVisible.clear();
-	model.entries.forEach((entry, k) => {
-		if (entry.kind === "group" && groupHasMembersToggle(entry.group)) cv.membersVisible.add(k);
-	});
-}
-
-// Which clickable node the mouse is currently over (ticket 24). Session-lived,
-// shared with every card: `cardId` names the hovered card, `nodeId` its hovered
-// node. Empty (both undefined) when the mouse is off every card or disabled, so
-// no row is highlighted. commitHover() is the single writer + render throttle.
-interface HoverState {
-	cardId?: string;
-	nodeId?: string;
-}
-
-class ActivityCard implements Component {
-	constructor(
-		private readonly model: CardModel,
-		private readonly theme: Theme,
-		private readonly cardId: string,
-		private readonly view: ViewState,
-		/** Shared line-index → node-id map by card id, refreshed each render for
-		 * mouse resolution (onCardMouse reads the last rendered rowMap). */
-		private readonly rowMaps: Map<string, string[]>,
-		/** Shared hover state (ticket 24): the row highlighted this frame is the one
-		 * whose node id matches when this card is the hovered card. */
-		private readonly hover: HoverState,
-		/** True when this card is being rendered from a PERSISTED snapshot on a
-		 * fresh-process resume (ticket 25 layer 3): render it settled/graceful, never
-		 * as a ticking live card, since no timer exists to advance it. */
-		private readonly stale = false,
-	) {}
-
-	render(width: number): string[] {
-		const theme = this.theme;
-		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
-
-		// The card renders in its FINAL shape from the first tool and grows in place
-		// (ticket 12): the same shapeCard() drives the live and settled views, so the
-		// only change at settle is the header word/spinner and a running row losing its
-		// spinner. read the mutable model + per-node expansion each frame; a captured
-		// tui.requestRender() ticks it while live. A stale resumed snapshot (ticket 25)
-		// is shaped settled/graceful instead — live:true becomes settled, workedMs 0
-		// becomes "Worked for —".
-		const shapeModel: CardShapeModel = this.stale
-			? staleCardShapeModel(this.model as PersistedCardData)
-			: {
-					live: this.model.live,
-					elapsedMs: this.model.live ? Date.now() - this.model.startMs : this.model.workedMs,
-					failures: this.model.failures,
-					entries: this.model.entries,
-					// A card force-settled in the running process (Esc-abort / stream error) is
-					// rendered through THIS non-stale branch, so the flag must flow to shapeCard
-					// or the "· interrupted" marker (ticket 32 point 3) is silently dropped in
-					// its primary scenario — only the resumed/stale path set it before.
-					interrupted: this.model.interrupted,
-				};
-		const cv = getCardView(this.view, this.cardId);
-		const expansion: CardExpansion = {
-			fullCollapsed: cv.fullCollapsed,
-			isMembersVisible: (k) => cv.membersVisible.has(k),
-		};
-		// The header + any running-row mark use pi's OWN spinner cadence (ticket 36):
-		// spinnerFrame(Date.now()) advances every SPINNER_INTERVAL_MS (80 ms), matching
-		// the composer working bar. It animates for free because pi's working indicator
-		// re-renders the whole tree ~every 80 ms while the agent works; our 500 ms
-		// LIVE_TICK_MS timer stays as the fallback repaint/content cadence. Once settled
-		// no running rows remain, so the frame is irrelevant.
-		const spinner = spinnerFrame(Date.now());
-		// Highlight the hovered row only when THIS card is the hovered one (ticket 24);
-		// undefined otherwise, so shapeCard applies no highlight (also the mouse-disabled
-		// case — hover is never written).
-		const hoveredNode = this.hover.cardId === this.cardId ? this.hover.nodeId : undefined;
-		const shaped = shapeCard(shapeModel, expansion, spinner, hoveredNode);
-		// Stash the row-map so a click on this card resolves to the right node. Clicks
-		// arrive in VISUAL (wrapped) rows, but shaped.rowMap is indexed by logical shape
-		// lines — a wide box/command line wraps to ≥2 rows on a narrow terminal, which
-		// would shift every node below it (reviewer P1). Measure each line at the Box's
-		// inner content width (width − 2×paddingX, where Text wraps) and expand the
-		// row-map into wrapped-row space so onCardMouse's event.y indexes it correctly.
-		const contentWidth = Math.max(1, width - CARD_BOX_PADDING_X * 2);
-		const heights: number[] = [];
-		for (const line of shaped.lines) {
-			const text = new Text(styleLine(theme, line), 0, 0);
-			heights.push(text.render(contentWidth).length);
-			box.addChild(text);
-		}
-		this.rowMaps.set(this.cardId, expandRowMapToVisual(shaped.rowMap, heights));
-		return box.render(width);
-	}
-
-	invalidate(): void {
-		// No cached state; render() reads live data + view each frame.
-	}
 }
 
 // ── TUI-handle capture widget ───────────────────────────────────────────────────
@@ -939,18 +816,16 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	/** Set the hovered card/node, re-rendering ONLY when it actually changes
 	 * (ticket 24 throttle): motion reports are dense, but a move within the same row
 	 * (or off every card while already cleared) does nothing. Passing undefined ids
-	 * clears the hover (leave). */
+	 * clears the hover (leave). Delegates to card-view.ts's pure commitHover, which
+	 * owns the throttle logic; this wrapper just supplies the live requestRender. */
 	function commitHover(cardId: string | undefined, nodeId: string | undefined): void {
-		if (hover.cardId === cardId && hover.nodeId === nodeId) return;
-		hover.cardId = cardId;
-		hover.nodeId = nodeId;
-		runtime.tui?.requestRender();
+		cardViewCommitHover(hover, cardId, nodeId, () => runtime.tui?.requestRender());
 	}
 
 	/** Clear any hover highlight (ticket 24): on card settle re-render + teardown, so
 	 * a finalized card (whose node ids may have shifted) never keeps a stale row lit. */
 	function clearHover(): void {
-		commitHover(undefined, undefined);
+		cardViewClearHover(hover, () => runtime.tui?.requestRender());
 	}
 
 	function toggleNode(id: string, nodeId: string): void {
@@ -1199,7 +1074,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			// While live this ActivityCard reads the mutating model each frame; once
 			// frozen at settle it renders the collapsed card (ticket 11); a stale resumed
 			// snapshot renders settled/graceful (ticket 25).
-			const card = new ActivityCard(model, theme, entry.id, view, rowMaps, hover, stale);
+			const card = new ActivityCard(model, theme, entry.id, view, rowMaps, hover, cardRenderPrimitives, stale);
 			// Wrap in MouseRegion so a click toggles this one card. Fullscreen routes
 			// clicks here natively; regular mode reaches it only via the synthesized
 			// dispatch in handleTerminalInput (ticket 09).

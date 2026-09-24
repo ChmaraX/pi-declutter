@@ -44,6 +44,10 @@ export interface ToolCall {
 	/** bash/powershell temp file holding the untruncated output when it truncated
 	 * (BashToolDetails.fullOutputPath); read lazily when the modal opens. */
 	fullOutputPath?: string;
+	/** Pre-computed member label for SYNTHETIC calls (a provider tool step
+	 * reconstructed from a thinking-channel dump, span-classify.ts) \u2014 there are
+	 * no real args for describeCall to describe. */
+	labelOverride?: string;
 }
 
 export interface CardEntryBuild {
@@ -61,10 +65,11 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 	const running = call.endMs === undefined;
 	const durMs = Math.max(0, (call.endMs ?? Date.now()) - call.startMs);
 	const callLike = toCallLike(call);
-	let label = describeCall(callLike);
+	let label = call.labelOverride ?? describeCall(callLike);
 	// Append an args gist only for a bare generic ("Used …") tool label — keyed off
-	// the structured predicate, not the label's prose (ticket 37).
-	if (describeCallIsGeneric(callLike)) {
+	// the structured predicate, not the label's prose (ticket 37). Never for a
+	// synthetic call: its labelOverride already IS the whole story.
+	if (call.labelOverride === undefined && describeCallIsGeneric(callLike)) {
 		const gist = argsGist(callLike);
 		if (gist) label = `${label} — ${gist}`;
 	}

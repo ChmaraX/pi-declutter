@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildCardEntries, type CardEntryBuild, settleAction, type ToolCall } from "../src/card-build.ts";
+import { buildCardEntries, type CardEntryBuild, settleAction, type ToolCall, toShapeItem } from "../src/card-build.ts";
 import type { Entry } from "../src/grouping.ts";
 
 function call(over: Partial<ToolCall> & { toolCallId: string; name: string }): ToolCall {
@@ -169,4 +169,23 @@ test("settleAction: a narration-only build (no tools ran) still counts as render
 	};
 	assert.equal(settleAction(narrationOnly, false), "append-settled");
 	assert.equal(settleAction(narrationOnly, true), "settle-live");
+});
+
+// ── Synthetic calls from thinking-channel dumps (span-classify) ────────────────
+
+test("toShapeItem: labelOverride wins over describeCall and suppresses the args gist", () => {
+	const call: ToolCall = {
+		toolCallId: "span-syn-1",
+		name: "bash",
+		arguments: {},
+		startMs: 1000,
+		endMs: 1400,
+		labelOverride: "Cursor shell: cd /x && npx biome lint",
+		fullOutput: "Checked 8 files in 13ms.",
+	};
+	const item = toShapeItem(call);
+	assert.equal(item.label, "Cursor shell: cd /x && npx biome lint");
+	assert.equal(item.glyph, "$"); // family name drives the glyph
+	assert.equal(item.command, undefined); // no real args — no $ line duplication
+	assert.equal(item.fullOutput, "Checked 8 files in 13ms.");
 });

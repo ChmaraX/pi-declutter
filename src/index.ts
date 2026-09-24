@@ -153,6 +153,7 @@ import {
 	suppressThinkingMarkdown,
 } from "./card-shape.ts";
 import { Grouper, hasNonWhitespace, shouldTick } from "./grouping.ts";
+import { classifyThinkingSpan } from "./span-classify.ts";
 import {
 	acquireToolRowHidePatch,
 	dumpTranscriptTree,
@@ -567,6 +568,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// enough for a summary line + a 10-line tail box, negligible retention. Reset
 	// on thinking_start, flushed into the group on thinking_end.
 	let thinkingBuf = "";
+	// Monotonic id source for synthetic calls reconstructed from thinking-channel
+	// tool dumps (span-classify.ts) \u2014 they have no provider toolCallId.
+	let syntheticCallSeq = 0;
 	// The most recently completed text block, captured at text_end, awaiting
 	// confirmation (ticket 41): AT MOST one at a time, since text blocks stream
 	// serially. If something follows it (a new tool call, new thinking, or another
@@ -1560,9 +1564,29 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				break;
 			case "thinking_end": {
 				const ms = thinkingStartMs ? Date.now() - thinkingStartMs : 0;
-				// Copy the buffer into the span AT CLOSE (ticket 23 bounded retention): the
-				// live box referenced thinkingBuf each tick; here the span freezes to it.
-				grouper.addThought(ms, thinkingBuf);
+				// Provider-stream normalization (span-classify.ts, owner issue): some
+				// providers (Cursor) stream TOOL ACTIVITY through the thinking channel \u2014
+				// "$ grep \u2026", "read /path", "Cursor shell: <cmd>" dumps with output, no
+				// real tool events at all. A span classified as a tool step becomes a
+				// synthetic settled call (a proper card member with the dump as its modal
+				// output) instead of polluting/overwriting the Thought entry.
+				const cls = classifyThinkingSpan(thinkingBuf);
+				if (cls.kind === "tool") {
+					syntheticCallSeq += 1;
+					grouper.addCall({
+						toolCallId: `span-syn-${syntheticCallSeq}`,
+						name: cls.family,
+						arguments: {},
+						startMs: Date.now() - ms,
+						endMs: Date.now(),
+						fullOutput: thinkingBuf.slice(0, MAX_MODAL_CAPTURE),
+						labelOverride: cls.label,
+					});
+				} else {
+					// Copy the buffer into the span AT CLOSE (ticket 23 bounded retention): the
+					// live box referenced thinkingBuf each tick; here the span freezes to it.
+					grouper.addThought(ms, thinkingBuf);
+				}
 				thinkingStartMs = undefined;
 				thinkingBuf = "";
 				// Transform the live "Thinking…" row to its settled "Thought Ns" form in

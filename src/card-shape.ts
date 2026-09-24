@@ -594,20 +594,29 @@ export function deriveNarrationSummary(text: string): string {
 export function coalesceThoughts(spans: readonly ThoughtSpanInput[]): CoalescedThought {
 	let ms = 0;
 	let chosen: ThoughtSpanInput | undefined;
+	const texts: string[] = [];
 	for (const span of spans) {
 		ms += Math.max(0, span.ms);
+		if (span.text.trim()) texts.push(span.text.trim());
 		if (span.ms >= MIN_THOUGHT_MS && span.text.trim()) chosen = span; // last wins
 	}
 	return {
 		ms,
 		summary: chosen ? deriveThoughtSummary(chosen.text) : "",
 		tail: chosen ? previewLines(chosen.text, MAX_THOUGHT_TAIL) : [],
-		// Raw kept-span text, untouched by previewLines' line/length caps, so the
-		// modal shows the full reasoning (ticket 40). Already bounded upstream by
-		// THINKING_BUF_MAX at capture time.
-		fullText: chosen ? chosen.text : "",
+		// EVERY span's text in stream order, not just the chosen one (owner bug:
+		// providers that stream reasoning as many small spans \u2014 Cursor \u2014 had all
+		// but the last span silently dropped from the modal, and the content
+		// appeared to be "overwritten" as each new span replaced it). Summary/tail
+		// stay chosen-span (the glance view); the modal shows the whole run.
+		// Per-span text is bounded at capture (THINKING_BUF_MAX); the join is
+		// capped here as a final guard.
+		fullText: texts.join("\n\n").slice(0, MAX_THOUGHT_FULLTEXT),
 	};
 }
+
+/** Cap for a coalesced thought's joined full text (modal body). */
+export const MAX_THOUGHT_FULLTEXT = 65536;
 
 function seg(text: string, tone: Tone): Segment {
 	return { text, tone };

@@ -411,9 +411,10 @@ test("coalesceThoughts sums durations and keeps the LAST >=1s span's summary + t
 	assert.equal(out.ms, 4700); // all durations summed
 	assert.equal(out.summary, "Second real thought"); // last >=1s span wins
 	assert.deepEqual(out.tail, ["Second real thought", "line1", "line2"]);
-	// fullText (ticket 40) is the chosen span's RAW text \u2014 identical shape either way
-	// here since it's short, but it must be the untruncated original, not a rebuild.
-	assert.equal(out.fullText, "Second real thought\nline1\nline2");
+	// fullText now carries EVERY span in stream order (owner bug: multi-span
+	// providers \u2014 Cursor \u2014 lost all but the last span from the modal); the
+	// summary/tail glance view stays chosen-span.
+	assert.equal(out.fullText, "tiny sub-second span\n\nFirst real thought\nbody a\n\nSecond real thought\nline1\nline2");
 });
 
 test("coalesceThoughts.fullText is UNTRUNCATED (ticket 40) while .tail stays previewLines-capped", () => {

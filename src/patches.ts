@@ -762,11 +762,12 @@ export function dumpTranscriptTree(root: unknown, width: number, label: string):
 // ── Universal tool-row absorption patch (owner issue: MCP / extension tool rows
 // render natively outside the card) ─────────────────────────────────────────────
 //
-// The 7 re-registered built-ins absorb via their own renderCall/renderResult
-// (tool-rows.ts). Every OTHER tool — MCP-adapter tools, cursor-sdk tools,
-// web-search, anything another extension registered — renders through pi's
-// ToolExecutionComponent with its owner's renderers, which we cannot
-// re-register without name conflicts. Instead: one guarded patch on the LIVE
+// EVERY tool's native row — built-in, MCP-adapter, cursor-sdk, web-search,
+// anything any extension registered — renders through pi's
+// ToolExecutionComponent with its owner's renderers. Re-registering tools to
+// override rendering is off the table (owner decision: it blocked
+// pi-cursor-sdk's native tool replay and hard-conflicted with other display
+// extensions). Instead: one guarded patch on the LIVE
 // ToolExecutionComponent prototype (acquired from a real instance, so it works
 // against the minified bundle exactly like the AMC spacer patch) that renders
 // ZERO rows for any toolCallId the feed has absorbed. pi adds these components
@@ -797,9 +798,9 @@ const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
 
 /**
  * Patch `proto.render` so any instance whose toolCallId `isAbsorbed` renders
- * zero rows. `isAbsorbed` is a callback (not a snapshot) so the SAME shared
- * AbsorbState set that collapses built-in rows drives these too — one source of
- * truth, absorption happens for every tool at the same moment (turn_end).
+ * zero rows. `isAbsorbed` is a callback (not a snapshot) reading the shared
+ * absorbed set — one source of truth for every tool; ids are added at
+ * tool_execution_start, so a row never paints a frame.
  * Returns false (fail open, native rows stay) when the prototype doesn't look
  * right. Render-only: never touches tool execution, results, or stored data.
  */

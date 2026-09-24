@@ -166,7 +166,7 @@ import {
 import { PatchController } from "./patch-controller.ts";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
 import { bucketCountsText } from "./labels.ts";
-import { absorbable, type AbsorbState, BUILT_IN_FACTORIES } from "./tool-rows.ts";
+
 import { OutputModal } from "./modal-view.ts";
 import { styleLine } from "./styling.ts";
 import { ModalController } from "./modal-controller.ts";
@@ -586,17 +586,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	 * answer, the matching record restores its native text block. */
 	let narrationHides: { instance: PatchTargetInstance; contentIndex: number; text: string }[] = [];
 
-	// Built-in tool rows folded into settled cards (session-lived; never cleared).
-	const absorbed: AbsorbState = new Set();
-
-	// Re-register the built-in tools, preserving execution and overriding only
-	// their rendering so their rows can collapse into the settled card. Safe in
-	// every mode: execution is delegated unchanged; renderCall/renderResult only
-	// run in the TUI. MCP/custom tools are deliberately left untouched.
-	const cwd = process.cwd();
-	for (const factory of BUILT_IN_FACTORIES) {
-		pi.registerTool(absorbable(factory(cwd), absorbed));
-	}
+	// Tool-call ids whose native rows the card absorbs (session-lived; never
+	// cleared \u2014 a hidden row must stay hidden for the transcript's life). Ids are
+	// added at tool_execution_start so the native row never paints a frame; the
+	// ToolExecutionComponent render patch (patches.ts) is the ONLY hiding
+	// mechanism \u2014 this extension registers NO tools. Deliberate (owner decision):
+	// re-registering built-ins made pi-cursor-sdk skip its native tool replay
+	// ("name already owned by another extension") and fall back to thinking-text
+	// transcripts, and it hard-conflicted with other display extensions.
+	const absorbed = new Set<string>();
 
 	// UI-lifecycle state.
 	let uiCtx: ExtensionContext | undefined;
@@ -664,7 +662,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (hasLiveUI(ctx)) uiCtx = ctx;
 	}
 
-	/** Start a fresh agent response. Absorbed rows persist (see AbsorbState).
+	/** Start a fresh agent response. Absorbed rows persist (session-lived set).
 	 *
 	 * CATCH-ALL force-settle (ticket 32 point 1): before dropping the previous
 	 * response's state, force-settle any card that is STILL live. A stream error
@@ -751,15 +749,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	}
 
 	/**
-	 * Absorb every tool row seen so far this response, collapsing them to zero
-	 * lines. Called at turn_end (ticket 08 fix): the just-finished turn's rows are
-	 * still in the viewport, so the requestRender is a cheap differential repaint
-	 * rather than the full-redraw/scrollback wipe that absorbing at agent_settled
-	 * would cause once earlier turns have scrolled off (research §3/§6.3). The live
-	 * card (appended above, ticket 11) shows the counter over the gap between the
-	 * rows vanishing and the card settling. Idempotent: absorbed
-	 * is a Set, so re-adding prior turns' ids is a no-op. Custom/MCP ids are inert
-	 * here (only built-in ToolCallRow reads the set).
+	 * Safety net: ensure every ledger id is in the absorbed set. Primary
+	 * absorption happens at tool_execution_start (before the row's first
+	 * frame); this catches any id that slipped past. Idempotent — Set.
 	 */
 	function absorbCurrentRows(): void {
 		let added = false;
@@ -772,12 +764,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (added) runtime.tui?.requestRender();
 	}
 
-	// \u2500\u2500 Universal tool-row absorption (MCP / extension tools) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-	// The built-ins absorb via their re-registered renderers (tool-rows.ts); every
-	// other tool's native row is collapsed by a guarded prototype patch on pi's
-	// ToolExecutionComponent, driven by the SAME `absorbed` set (one source of
-	// truth, everything vanishes together at turn_end). Fail-open: while not
-	// installed, non-built-in rows simply keep rendering natively as before.
+	// \u2500\u2500 Universal tool-row absorption \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	// EVERY tool's native row (built-in, MCP, extension) is hidden by ONE guarded
+	// prototype patch on pi's ToolExecutionComponent, driven by the shared
+	// `absorbed` set; ids are added at tool_execution_start so rows never paint a
+	// frame. The old ticket-08 re-registration mechanism is gone (owner decision:
+	// it blocked pi-cursor-sdk's native tool replay and hard-conflicted with
+	// other display extensions). Fail-open: while the patch is not installed,
+	// rows render natively (pi default) \u2014 noisier but fully functional.
 	let toolRowPatchInstalled = false;
 	function tryAcquireToolRowPatch(): void {
 		if (toolRowPatchInstalled || !runtime.tui) return;
@@ -1661,10 +1655,15 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
 		captureCtx(ctx);
-		// Universal tool-row absorption (owner issue: MCP/extension tool rows outside
-		// the card): acquire the ToolExecutionComponent prototype patch as soon as a
-		// live instance exists. This event may run before pi's own UI handler mounts
-		// the component, so tool_execution_end retries too. No-op once installed.
+		// Universal tool-row absorption: hide this call's native row from its FIRST
+		// frame (the card is the only view of tool activity \u2014 Codex style). The id
+		// goes into the set BEFORE the component's first render; the render patch
+		// then returns zero rows for it, so nothing paints and nothing collapses
+		// later (no differential-repaint/scrollback concerns at all).
+		absorbed.add(event.toolCallId);
+		// Acquire the ToolExecutionComponent prototype patch as soon as a live
+		// instance exists. This event may run before pi's own UI handler mounts the
+		// component, so tool_execution_end retries too. No-op once installed.
 		tryAcquireToolRowPatch();
 		// A new tool call starting is proof anything pending wasn't the final answer
 		// (ticket 41).

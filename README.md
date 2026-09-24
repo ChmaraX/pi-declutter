@@ -362,8 +362,6 @@ node --test test/*.test.ts
   factory. Unit-tested in `test/modal-controller.test.ts`.
 - `src/modal-view.ts` — the `OutputModal` overlay component + badge/truncate
   chrome.
-- `src/tool-rows.ts` — the re-registered built-in tool rows
-  (`ToolCallRow`/`EmptyRow`/`absorbable`/`BUILT_IN_FACTORIES`).
 - `src/card-build.ts` — pure grouper-entries → card-data conversion
   (`buildCardEntries`/`toShapeItem`) + the pure `settleAction` decision.
   Unit-tested in `test/card-build.test.ts`.

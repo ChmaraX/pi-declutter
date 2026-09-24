@@ -177,7 +177,9 @@ export class OutputModal implements Focusable {
 		this.top = clampScrollTop(this.top, wrapped.length, viewport);
 		const slice = visibleSlice(wrapped, this.top, viewport);
 		for (const bodyLine of slice) {
-			lines.push(rowLine(` ${th.fg("dim", bodyLine)}`));
+			// Body is CONTENT the user opened to read \u2014 normal text colour (owner
+			// decision, same reasoning as the narration rows). Chrome stays dim.
+			lines.push(rowLine(` ${th.fg("text", bodyLine)}`));
 		}
 		// Pad the body area to a stable height so the box doesn't jump while scrolling
 		// a short tail (only when there IS content to stabilize around).

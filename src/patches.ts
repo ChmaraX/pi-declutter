@@ -796,6 +796,13 @@ export function isToolExecutionComponentLike(value: unknown): boolean {
 /** Marker so the render patch installs exactly once per prototype. */
 const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
 
+/** Prototype slot holding the CURRENT isAbsorbed callback. The patched render
+ * reads it at call time, and install() always rewrites it \u2014 so a /reload's
+ * fresh runtime (new absorbed set, new closure) REBINDS the existing patch
+ * instead of leaving it pointing at the dead runtime's set (which would let
+ * every post-reload tool row render natively again). */
+const TOOL_ROW_PATCH_CALLBACK = "__activityFeedToolRowPatchCb";
+
 /**
  * Patch `proto.render` so any instance whose toolCallId `isAbsorbed` renders
  * zero rows. `isAbsorbed` is a callback (not a snapshot) reading the shared
@@ -805,14 +812,31 @@ const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
  * right. Render-only: never touches tool execution, results, or stored data.
  */
 export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: string) => boolean): boolean {
-	const p = proto as { render?: unknown; [TOOL_ROW_PATCH_MARKER]?: unknown };
-	if (p[TOOL_ROW_PATCH_MARKER]) return true; // already installed
+	const p = proto as {
+		render?: unknown;
+		[TOOL_ROW_PATCH_MARKER]?: unknown;
+		[TOOL_ROW_PATCH_CALLBACK]?: unknown;
+	};
+	try {
+		// ALWAYS (re)bind the callback \u2014 this is what keeps the patch alive across
+		// /reload (the patched render below reads it per call, never a closure).
+		Object.defineProperty(p, TOOL_ROW_PATCH_CALLBACK, {
+			value: isAbsorbed,
+			enumerable: false,
+			configurable: true,
+			writable: true,
+		});
+	} catch {
+		return false;
+	}
+	if (p[TOOL_ROW_PATCH_MARKER]) return true; // render already patched; rebind above sufficed
 	if (typeof p.render !== "function") return false;
 	const original = p.render as (this: unknown, width: number) => string[];
 	try {
 		p.render = function (this: { toolCallId?: unknown }, width: number): string[] {
+			const cb = p[TOOL_ROW_PATCH_CALLBACK];
 			const id = this?.toolCallId;
-			if (typeof id === "string" && isAbsorbed(id)) return [];
+			if (typeof cb === "function" && typeof id === "string" && cb(id)) return [];
 			return original.call(this, width);
 		};
 		Object.defineProperty(p, TOOL_ROW_PATCH_MARKER, { value: true, enumerable: false, configurable: true });
@@ -820,6 +844,38 @@ export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: 
 		return false;
 	}
 	return true;
+}
+
+/**
+ * Collect every live ToolExecutionComponent's toolCallId under `root`.
+ * Used after a rebuild (/reload) so the fresh runtime can re-absorb
+ * HISTORICAL tool rows \u2014 its absorbed set starts empty, and rebinding the
+ * render patch to it would otherwise let every pre-reload row render natively
+ * again. The card is the only intended view of tool activity, so absorbing
+ * everything found is the invariant, not a heuristic.
+ */
+export function collectToolExecutionIds(root: unknown): string[] {
+	const ids: string[] = [];
+	const seen = new Set<unknown>();
+	const visit = (value: unknown): void => {
+		if (!value || typeof value !== "object" || seen.has(value)) return;
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const child of value) visit(child);
+			return;
+		}
+		if (isToolExecutionComponentLike(value)) ids.push((value as { toolCallId: string }).toolCallId);
+		const children = (value as { children?: unknown }).children;
+		if (Array.isArray(children)) for (const child of children) visit(child);
+		try {
+			const mounted = (value as { getMountedRoots?: () => unknown }).getMountedRoots?.();
+			if (Array.isArray(mounted)) for (const r of mounted) visit(r);
+		} catch {
+			// mid-switch renderer; ignore
+		}
+	};
+	visit(root);
+	return ids;
 }
 
 export interface ToolRowPatchResult {

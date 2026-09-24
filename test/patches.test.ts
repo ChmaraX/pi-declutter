@@ -740,3 +740,21 @@ test("restoreMessageTextBlock: fails open on a bad index or non-text block", () 
 	assert.equal(restoreMessageTextBlock(instance, 0, "x"), false);
 	assert.equal(restoreMessageTextBlock(instance, 5, "x"), false);
 });
+
+test("installToolRowHidePatch: a second install REBINDS the callback (post-/reload runtime with a fresh set)", () => {
+	const oldSet = new Set<string>(["old-call"]);
+	const { proto, instance: a } = makeFakeToolExec("old-call");
+	assert.equal(installToolRowHidePatch(proto, (id) => oldSet.has(id)), true);
+	assert.deepEqual(a.render(80), []);
+
+	// Simulate /reload: a NEW runtime installs again with a NEW absorbed set.
+	const newSet = new Set<string>(["new-call"]);
+	assert.equal(installToolRowHidePatch(proto, (id) => newSet.has(id)), true);
+	const b = Object.create(proto) as { toolCallId: string; toolName: string; render(width: number): string[] };
+	b.toolCallId = "new-call";
+	b.toolName = "read";
+	assert.deepEqual(b.render(80), []); // hidden via the NEW set — no stale closure
+	// The old id is no longer in the (new) callback's set — renders natively now,
+	// which is the correct fail-open direction for a dead runtime's rows.
+	assert.deepEqual(a.render(80), ["tool row for old-call"]);
+});

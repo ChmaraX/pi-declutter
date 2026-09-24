@@ -156,6 +156,7 @@ import { Grouper, hasNonWhitespace, shouldTick } from "./grouping.ts";
 import { classifyThinkingSpan } from "./span-classify.ts";
 import {
 	acquireToolRowHidePatch,
+	collectToolExecutionIds,
 	dumpTranscriptTree,
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
@@ -1447,6 +1448,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// idempotent + render-only, so extra sweeps are harmless.
 		const sweepNarration = (): void => {
 			try {
+				if (!runtime.tui) return;
+				// Re-absorb HISTORICAL tool rows: this runtime's absorbed set starts
+				// empty, and once it rebinds the render patch (first tool of the new
+				// runtime), pre-reload rows would render natively again. Every tool
+				// row's activity lives in a card — absorb everything found.
+				for (const id of collectToolExecutionIds(runtime.tui)) absorbed.add(id);
+				tryAcquireToolRowPatch();
 				const texts = new Set<string>();
 				for (const entry of ctx.sessionManager.getEntries()) {
 					if (entry.type !== "custom") continue;
@@ -1454,10 +1462,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 					if (custom.customType !== CARD_TYPE) continue;
 					for (const t of narrationTexts(custom.data?.entries ?? [])) texts.add(t);
 				}
-				if (texts.size === 0 || !runtime.tui) return;
-				if (rehideNarrationAfterRebuild(runtime.tui, texts) > 0) runtime.tui.requestRender();
+				if (texts.size > 0) rehideNarrationAfterRebuild(runtime.tui, texts);
+				runtime.tui.requestRender();
 			} catch {
-				// Fail open: narration stays visible natively (never lost, only doubled).
+				// Fail open: content stays visible natively (never lost, only doubled).
 			}
 		};
 		sweepNarration();

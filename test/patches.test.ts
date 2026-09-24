@@ -758,3 +758,50 @@ test("installToolRowHidePatch: a second install REBINDS the callback (post-/relo
 	// which is the correct fail-open direction for a dead runtime's rows.
 	assert.deepEqual(a.render(80), ["tool row for old-call"]);
 });
+
+// ── installToolMountHook (flick killer) ────────────────────────────────────────
+
+import { installToolMountHook } from "../src/patches.ts";
+
+class FakeBaseContainer {
+	children: unknown[] = [];
+	addChild(child: unknown): void {
+		this.children.push(child);
+	}
+}
+
+test("installToolMountHook: onMount fires for a tool-like child BEFORE it lands in the container", () => {
+	const mounted: string[] = [];
+	const root = new FakeBaseContainer();
+	assert.equal(
+		installToolMountHook(root, (instance) => {
+			mounted.push((instance as { toolCallId: string }).toolCallId);
+			// At callback time the child is NOT yet in any children array (pre-render).
+			assert.equal(root.children.length, 0);
+		}),
+		true,
+	);
+	const { instance } = makeFakeToolExec("flick-1");
+	root.addChild(instance);
+	assert.deepEqual(mounted, ["flick-1"]);
+	assert.equal(root.children.length, 1); // mounting itself is untouched
+	// Non-tool children pass through silently.
+	root.addChild({ some: "text component" });
+	assert.deepEqual(mounted, ["flick-1"]);
+});
+
+test("installToolMountHook: second install rebinds the callback (post-/reload runtime)", () => {
+	const root = new FakeBaseContainer();
+	const first: string[] = [];
+	const second: string[] = [];
+	assert.equal(installToolMountHook(root, (i) => first.push((i as { toolCallId: string }).toolCallId)), true);
+	assert.equal(installToolMountHook(root, (i) => second.push((i as { toolCallId: string }).toolCallId)), true);
+	root.addChild(makeFakeToolExec("after-reload").instance);
+	assert.deepEqual(first, []);
+	assert.deepEqual(second, ["after-reload"]);
+});
+
+test("installToolMountHook: fails open when the root has no addChild anywhere in its chain", () => {
+	assert.equal(installToolMountHook({ plain: true }, () => {}), false);
+	assert.equal(installToolMountHook(undefined, () => {}), false);
+});

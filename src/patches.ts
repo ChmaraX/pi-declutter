@@ -919,3 +919,69 @@ export function acquireToolRowHidePatch(root: unknown, isAbsorbed: (toolCallId: 
 	if (!installToolRowHidePatch(proto, isAbsorbed)) return { installed: false, reason: "prototype.render not patchable" };
 	return { installed: true };
 }
+
+// ── Tool-mount hook (owner issue: a native tool row flashes for a moment before
+// absorption) ───────────────────────────────────────────────────────────────────
+//
+// Even with absorption at tool_execution_start, two windows let a frame paint:
+// pi's UI handler may mount + schedule a render before our event handler runs,
+// and the FIRST tool of a fresh session has no live instance to acquire the
+// render patch from until it already exists (and possibly painted). Hooking the
+// bundle's Container.prototype.addChild closes both: the moment ANY container
+// mounts a ToolExecutionComponent-like child — strictly before its first
+// render — the callback absorbs its id and installs/rebinds the render patch
+// from that very instance. TuiBase extends Container and addChild is defined
+// once on Container.prototype, so one wrap (acquired by walking the prototype
+// chain of the live TUI handle) covers every mount in the app.
+
+const TOOL_MOUNT_HOOK_MARKER = "__activityFeedToolMountHook";
+const TOOL_MOUNT_HOOK_CB = "__activityFeedToolMountHookCb";
+
+/**
+ * Wrap the bundle's Container.prototype.addChild so `onMount(child)` fires for
+ * every ToolExecutionComponent-like child the instant it is added to any
+ * container (before its first render). The callback lives in a prototype slot
+ * that install always rewrites, so a /reload's fresh runtime rebinds the
+ * existing wrap (same pattern as the render patch). Fail-open at every step;
+ * the wrap never throws into pi's mounting path.
+ */
+export function installToolMountHook(root: unknown, onMount: (instance: object) => void): boolean {
+	let proto: object | null = root && typeof root === "object" ? Object.getPrototypeOf(root) : null;
+	while (proto && !Object.prototype.hasOwnProperty.call(proto, "addChild")) proto = Object.getPrototypeOf(proto);
+	if (!proto) return false;
+	const p = proto as {
+		addChild?: unknown;
+		[TOOL_MOUNT_HOOK_MARKER]?: unknown;
+		[TOOL_MOUNT_HOOK_CB]?: unknown;
+	};
+	try {
+		Object.defineProperty(p, TOOL_MOUNT_HOOK_CB, {
+			value: onMount,
+			enumerable: false,
+			configurable: true,
+			writable: true,
+		});
+	} catch {
+		return false;
+	}
+	if (p[TOOL_MOUNT_HOOK_MARKER]) return true; // wrapped already; rebind above sufficed
+	if (typeof p.addChild !== "function") return false;
+	const original = p.addChild as (this: unknown, child: unknown, ...rest: unknown[]) => unknown;
+	try {
+		p.addChild = function (this: unknown, child: unknown, ...rest: unknown[]): unknown {
+			try {
+				if (isToolExecutionComponentLike(child)) {
+					const cb = p[TOOL_MOUNT_HOOK_CB];
+					if (typeof cb === "function") (cb as (instance: object) => void)(child as object);
+				}
+			} catch {
+				// Never break pi's mounting path.
+			}
+			return original.call(this, child, ...rest);
+		};
+		Object.defineProperty(p, TOOL_MOUNT_HOOK_MARKER, { value: true, enumerable: false, configurable: true });
+	} catch {
+		return false;
+	}
+	return true;
+}

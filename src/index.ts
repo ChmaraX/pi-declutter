@@ -158,6 +158,8 @@ import {
 	acquireToolRowHidePatch,
 	collectToolExecutionIds,
 	dumpTranscriptTree,
+	installToolMountHook,
+	installToolRowHidePatch,
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
 	type PatchTargetInstance,
@@ -1455,6 +1457,16 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// row's activity lives in a card — absorb everything found.
 				for (const id of collectToolExecutionIds(runtime.tui)) absorbed.add(id);
 				tryAcquireToolRowPatch();
+				// Flick killer (owner issue): absorb + patch at MOUNT time, before the
+				// component's first render, so a native tool row never paints even one
+				// frame — covers pi's-handler-first event ordering AND the first tool
+				// of a fresh session (which acquires the render patch from itself).
+				installToolMountHook(runtime.tui, (instance) => {
+					const id = (instance as { toolCallId?: unknown }).toolCallId;
+					if (typeof id === "string") absorbed.add(id);
+					const proto = Object.getPrototypeOf(instance) as object | null;
+					if (proto) toolRowPatchInstalled = installToolRowHidePatch(proto, (callId) => absorbed.has(callId)) || toolRowPatchInstalled;
+				});
 				const texts = new Set<string>();
 				for (const entry of ctx.sessionManager.getEntries()) {
 					if (entry.type !== "custom") continue;

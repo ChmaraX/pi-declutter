@@ -20,6 +20,7 @@ import {
 	bucketCountsText,
 	describeCall,
 	describeCallIsGeneric,
+	isCommandTool,
 	settledLabel,
 	type ToolCallLike,
 } from "./labels.ts";
@@ -73,7 +74,7 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		const gist = argsGist(callLike);
 		if (gist) label = `${label} — ${gist}`;
 	}
-	const command = call.name === "bash" || call.name === "powershell" ? asString(call.arguments.command) : undefined;
+	const command = isCommandTool(call.name) ? asString(call.arguments.command) : undefined;
 	return {
 		label,
 		durMs,

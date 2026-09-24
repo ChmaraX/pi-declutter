@@ -169,7 +169,7 @@ import {
 } from "./patches.ts";
 import { PatchController } from "./patch-controller.ts";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
-import { bucketCountsText } from "./labels.ts";
+import { bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
 
 import { OutputModal } from "./modal-view.ts";
 import { styleLine } from "./styling.ts";
@@ -202,10 +202,6 @@ const CARD_BOX_PADDING_Y = 1;
 // expanded into that wrapped space in ActivityCard.render so clicks on a card whose
 // lines wrap still resolve to the right node (reviewer P1).
 const CARD_BOX_PADDING_X = 1;
-// Tool families whose result output we surface as an expanded preview (ticket 12
-// req 5): commands and searches. read/edit/write are skipped (their target line
-// already says everything useful, and file bodies would be huge).
-const PREVIEW_TOOLS = new Set(["bash", "powershell", "grep", "find", "ls"]);
 // Per-thinking-span capture cap (ticket 20): ~2KB is enough for the summary line
 // plus a 10-line tail box; anything beyond is dropped (bounded retention, like
 // the tool-output previews).
@@ -288,6 +284,15 @@ function extractResultText(result: unknown): string {
 	return parts.join("\n");
 }
 
+// biome-ignore lint/style/useNodejsImportProtocol: keep require (not import) for jiti
+// loader parity — the extension is loaded through pi's jiti runtime, which
+// resolves CJS require() paths pi itself relies on; hoisted here so the two
+// call sites (readFullOutput, the debug-dump path below) share one require
+// instead of repeating it inline (finding 24).
+function nodeFs(): typeof import("node:fs") {
+	return require("node:fs") as typeof import("node:fs");
+}
+
 /**
  * Resolve the full output text for a member's modal (ticket 35). Prefers the
  * bash/powershell temp file (`fullOutputPath`) that holds the UNTRUNCATED output
@@ -299,8 +304,7 @@ function extractResultText(result: unknown): string {
 function readFullOutput(item: ShapeItem): string | undefined {
 	if (item.fullOutputPath) {
 		try {
-			// biome-ignore lint/style/useNodejsImportProtocol: keep require for jiti loader parity
-			const fs = require("node:fs") as typeof import("node:fs");
+			const fs = nodeFs();
 			// BOUNDED read (ticket 35 review P1): fullOutputPath is written precisely
 			// when the command TRUNCATED, so the file holds large untruncated output.
 			// readFileSync would pull the whole file into memory before slicing —
@@ -1298,7 +1302,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// bundle components so we stop guessing dist-vs-bundle. Off by default.
 		if (process.env.PI_ACTIVITY_DEBUG === "1" && runtime.tui) {
 			try {
-				const fs = require("node:fs");
+				const fs = nodeFs();
 				const log = process.env.PI_ACTIVITY_DEBUG_LOG || "/tmp/activity-feed-debug.log";
 				fs.appendFileSync(log, dumpTranscriptTree(runtime.tui, 120, "settle") + "\n");
 			} catch {
@@ -1737,7 +1741,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			if (text.length > 0) call.fullOutput = text.slice(0, MAX_MODAL_CAPTURE);
 			// The short INLINE preview stays gated to command/search calls (ticket 12
 			// req 5): read/edit/write target lines say enough, file bodies are huge.
-			if (PREVIEW_TOOLS.has(call.name)) {
+			if (isPreviewTool(call.name)) {
 				const preview = previewLines(text);
 				if (preview.length > 0) call.resultPreview = preview;
 				// On a failed command, capture the exit code for the box badge (ticket 17).
@@ -1764,7 +1768,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	pi.on("tool_result", (event: ToolResultEvent) => {
 		const call = ledger.get(event.toolCallId);
 		if (!call) return;
-		if ((event.toolName === "bash" || event.toolName === "powershell") && event.details) {
+		if (isCommandTool(event.toolName) && event.details) {
 			const path = (event.details as { fullOutputPath?: unknown }).fullOutputPath;
 			if (typeof path === "string" && path.length > 0) call.fullOutputPath = path;
 		}

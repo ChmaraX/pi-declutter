@@ -13,7 +13,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bucketCountsText, describeCall, describeCallIsGeneric, type ToolCallLike } from "../src/labels.ts";
+import {
+	bucketCountsText,
+	bucketOf,
+	describeCall,
+	describeCallIsGeneric,
+	isCommandTool,
+	isPreviewTool,
+	type ToolCallLike,
+} from "../src/labels.ts";
+import { toolGlyph } from "../src/card-shape.ts";
 
 function call(name: string, args: Record<string, unknown> = {}): ToolCallLike {
 	return { name, arguments: args };
@@ -57,6 +66,40 @@ test("describeCallIsGeneric is true for bare generic fallbacks", () => {
 		assert.equal(describeCallIsGeneric(c), true, `${c.name} should be generic`);
 		assert.equal(describeCall(c).startsWith("Used "), true);
 	}
+});
+
+// ── TOOL_TRAITS (review finding 13: one dispatch table, not five scattered
+// switches) ─────────────────────────────────────────────────────────────────
+
+test("toolGlyph/bucketOf/isCommandTool/isPreviewTool agree per built-in tool", () => {
+	const expected: Record<string, { bucket: string; glyph: string; isCommand: boolean; preview: boolean }> = {
+		read: { bucket: "files", glyph: "\u25a4", isCommand: false, preview: false },
+		edit: { bucket: "files", glyph: "\u270e", isCommand: false, preview: false },
+		write: { bucket: "files", glyph: "\u270e", isCommand: false, preview: false },
+		grep: { bucket: "searches", glyph: "\u2315", isCommand: false, preview: true },
+		find: { bucket: "searches", glyph: "\u2261", isCommand: false, preview: true },
+		ls: { bucket: "searches", glyph: "\u2261", isCommand: false, preview: true },
+		bash: { bucket: "commands", glyph: "$", isCommand: true, preview: true },
+		powershell: { bucket: "commands", glyph: "$", isCommand: true, preview: true },
+	};
+	for (const [name, traits] of Object.entries(expected)) {
+		assert.equal(bucketOf(name), traits.bucket, `${name} bucket`);
+		assert.equal(toolGlyph(name), traits.glyph, `${name} glyph`);
+		assert.equal(isCommandTool(name), traits.isCommand, `${name} isCommand`);
+		assert.equal(isPreviewTool(name), traits.preview, `${name} preview`);
+	}
+});
+
+test("unknown/MCP tool names keep today's fallback: generic bucket, default glyph, not a command, no preview", () => {
+	for (const name of ["mystery", "linear_get_issue", "cursor", "github_pull_request"]) {
+		assert.equal(bucketOf(name), "tools", `${name} bucket`);
+		assert.equal(toolGlyph(name), "\u25c6", `${name} glyph`);
+		assert.equal(isCommandTool(name), false, `${name} isCommand`);
+		assert.equal(isPreviewTool(name), false, `${name} preview`);
+	}
+	assert.equal(bucketOf(undefined), "tools");
+	assert.equal(isCommandTool(undefined), false);
+	assert.equal(isPreviewTool(undefined), false);
 });
 
 test("describeCallIsGeneric matches describeCall's 'Used ' prefix across a mixed set", () => {

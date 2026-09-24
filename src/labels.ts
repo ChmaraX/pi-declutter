@@ -31,16 +31,62 @@ export interface ToolCallLike {
 	arguments?: Record<string, unknown>;
 }
 
-const BUCKET_OF: Record<string, Bucket> = {
-	read: "files",
-	edit: "files",
-	write: "files",
-	grep: "searches",
-	find: "searches",
-	ls: "searches",
-	bash: "commands",
-	powershell: "commands",
+// ── Single per-tool-name dispatch table (review finding 13) ────────────────────
+// Every built-in tool's bucket / row glyph / command-ness / inline-preview
+// eligibility, in ONE place. bucketOf, toolGlyph (card-shape.ts), isCommandTool,
+// and isPreviewTool (index.ts) all read this instead of re-listing tool names
+// in their own switch/Set. A name absent from this table is an MCP/custom tool:
+// every reader falls back to today's behavior (generic "tools" bucket, "◆"
+// glyph, not a command, no inline preview) via its own default, not a table row.
+export interface ToolTraits {
+	bucket: Bucket;
+	/** Member-row mark glyph (ticket 17 G4, atlas "Row anatomy"). */
+	glyph: string;
+	/** True for the tools whose result is a shell command run (bash/powershell):
+	 * they get a `$ <command>` modal header and drive the `isError` exit-code
+	 * badge path. Absent (falsy) for everything else. */
+	isCommand?: boolean;
+	/** True for tools whose result output is worth an inline preview tail
+	 * (ticket 12 req 5): commands and searches. read/edit/write are excluded —
+	 * their target line already says everything useful, and file bodies would
+	 * be huge. Absent (falsy) for everything else. */
+	preview?: boolean;
+}
+
+const TOOL_TRAITS: Record<string, ToolTraits> = {
+	read: { bucket: "files", glyph: "▤" },
+	edit: { bucket: "files", glyph: "✎" },
+	write: { bucket: "files", glyph: "✎" },
+	grep: { bucket: "searches", glyph: "⌕", preview: true },
+	find: { bucket: "searches", glyph: "≡", preview: true },
+	ls: { bucket: "searches", glyph: "≡", preview: true },
+	bash: { bucket: "commands", glyph: "$", isCommand: true, preview: true },
+	powershell: { bucket: "commands", glyph: "$", isCommand: true, preview: true },
 };
+
+/** Bucket for a tool name; unknown/MCP tools fall into the generic "tools"
+ * bucket (ticket-02 default). */
+export function bucketOf(name: string | undefined): Bucket {
+	return (name && TOOL_TRAITS[name]?.bucket) || "tools";
+}
+
+/** Row-mark glyph for a tool name (ticket 17 G4); unknown/MCP tools get the
+ * generic "◆". */
+export function toolTraitGlyph(name: string | undefined): string {
+	return (name && TOOL_TRAITS[name]?.glyph) || "◆";
+}
+
+/** Whether a tool name is a shell-command tool (bash/powershell); false for
+ * everything else, including unknown/MCP tools. */
+export function isCommandTool(name: string | undefined): boolean {
+	return Boolean(name && TOOL_TRAITS[name]?.isCommand);
+}
+
+/** Whether a tool's result output is worth an inline preview tail (ticket 12
+ * req 5); false for everything else, including unknown/MCP tools. */
+export function isPreviewTool(name: string | undefined): boolean {
+	return Boolean(name && TOOL_TRAITS[name]?.preview);
+}
 
 // Bucket display order (also the order used in both outputs).
 const BUCKET_ORDER: Bucket[] = ["files", "searches", "commands", "tools"];
@@ -60,10 +106,6 @@ const SETTLED_PHRASE: Record<Bucket, string> = {
 	commands: "ran commands",
 	tools: "used tools",
 };
-
-export function bucketOf(name: string | undefined): Bucket {
-	return (name && BUCKET_OF[name]) || "tools";
-}
 
 function countBuckets(calls: ToolCallLike[]): Record<Bucket, number> {
 	const counts: Record<Bucket, number> = { files: 0, searches: 0, commands: 0, tools: 0 };
@@ -169,24 +211,14 @@ function customToolLabel(name: string, args: Record<string, unknown>): string {
 // ("Used Cursor" / "Used <family>" / "Used <name>") rather than a concrete,
 // self-describing one. The itemized ledger appends an args gist only for these
 // (ticket 07 / 37): structured signal, so a wording change to a concrete custom
-// label can never silently flip the gist on/off. Mirrors describeCall's switch
-// (its explicit file/search/command cases are never generic) and
-// customToolLabel's own "Used …" branches for the default (tools-bucket) case.
+// label can never silently flip the gist on/off. A call is never generic when
+// its tool has a TOOL_TRAITS row (describeCall's explicit file/search/command
+// cases below are never generic); mirrors customToolLabel's own "Used …"
+// branches for the default (tools-bucket) case.
 export function describeCallIsGeneric(call: ToolCallLike): boolean {
 	const name = call?.name;
-	switch (name) {
-		case "read":
-		case "edit":
-		case "write":
-		case "grep":
-		case "find":
-		case "ls":
-		case "bash":
-		case "powershell":
-			return false;
-		default:
-			return customToolLabel(name ?? "a tool", call?.arguments ?? {}).startsWith("Used ");
-	}
+	if (name && name in TOOL_TRAITS) return false;
+	return customToolLabel(name ?? "a tool", call?.arguments ?? {}).startsWith("Used ");
 }
 
 // ── Single-member / per-row target label ──────────────────────────────────────
@@ -195,6 +227,7 @@ export function describeCallIsGeneric(call: ToolCallLike): boolean {
 export function describeCall(call: ToolCallLike): string {
 	const name = call?.name;
 	const args = call?.arguments ?? {};
+	if (isCommandTool(name)) return `Ran ${commandTarget(args.command)}`;
 	switch (name) {
 		case "read":
 			return `Read ${basename(args.path) || "a file"}`;
@@ -207,9 +240,6 @@ export function describeCall(call: ToolCallLike): string {
 			return `Searched for ${asString(args.pattern) ?? "a pattern"}`;
 		case "ls":
 			return `Listed ${basename(args.path) || "."}`;
-		case "bash":
-		case "powershell":
-			return `Ran ${commandTarget(args.command)}`;
 		default:
 			return customToolLabel(name ?? "a tool", args);
 	}

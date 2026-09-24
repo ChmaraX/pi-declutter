@@ -46,6 +46,7 @@
  */
 
 import { MIN_THOUGHT_MS } from "./grouping.ts";
+import { toolTraitGlyph } from "./labels.ts";
 
 // Re-exported so callers/tests keep importing the 1s thinking threshold from
 // card-shape; grouping.ts owns it (it drives the group-breaking decision).
@@ -445,23 +446,7 @@ export function shouldReappendCard(params: {
  *   edit/write `✎`, generic tool `◆`. Chevrons use ▸/▾ so none are reused here.
  */
 export function toolGlyph(toolName: string): string {
-	switch (toolName) {
-		case "bash":
-		case "powershell":
-			return "$";
-		case "read":
-			return "▤";
-		case "grep":
-			return "⌕";
-		case "find":
-		case "ls":
-			return "≡";
-		case "edit":
-		case "write":
-			return "✎";
-		default:
-			return "◆";
-	}
+	return toolTraitGlyph(toolName);
 }
 
 /** Braille spinner frames for a currently-running row (ticket 12 req 2/3) AND the

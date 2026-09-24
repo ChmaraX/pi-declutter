@@ -134,6 +134,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import {
+	type CardEntry,
 	type CardExpansion,
 	type CardModel,
 	type CardShapeModel,
@@ -151,22 +152,22 @@ import {
 	spinnerFrame,
 	suppressThinkingMarkdown,
 } from "./card-shape.ts";
-import { Grouper, hasNonWhitespace, shouldTick } from "./grouping.ts";
+import { Grouper, shouldTick } from "./grouping.ts";
 import { classifyThinkingSpan } from "./span-classify.ts";
 import {
 	acquireToolRowHidePatch,
 	collectToolExecutionIds,
 	dumpTranscriptTree,
+	findAssistantMessageComponents,
+	hideMessageTextBlock,
 	installClickAwayClosePatch,
 	installToolMountHook,
 	installToolRowHidePatch,
-	findAssistantMessageComponents,
-	hideMessageTextBlock,
-	type PatchTargetInstance,
 	rehideNarrationAfterRebuild,
 	restoreMessageTextBlock,
 } from "./patches.ts";
 import { PatchController } from "./patch-controller.ts";
+import { NarrationController } from "./narration-controller.ts";
 import { MouseController } from "./mouse-controller.ts";
 import { bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
 
@@ -334,15 +335,6 @@ function readFullOutput(item: ShapeItem): string | undefined {
 // above) — this file keeps only the wiring that owns their instances (`view`,
 // `hover`, `rowMaps` below) and dispatches into them from pi's events.
 
-/** One retroactively hidden (or hideable) narration text block: the live
- * component instance, which content block, and the trimmed text (used for
- * rebuild re-hides and promotion restore). */
-interface NarrationHide {
-	instance: PatchTargetInstance;
-	contentIndex: number;
-	text: string;
-}
-
 /** Toggle a value's membership in a set (add if absent, remove if present). */
 function toggleInSet<T>(set: Set<T>, value: T): void {
 	if (set.has(value)) set.delete(value);
@@ -451,19 +443,6 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// Monotonic id source for synthetic calls reconstructed from thinking-channel
 	// tool dumps (span-classify.ts) \u2014 they have no provider toolCallId.
 	let syntheticCallSeq = 0;
-	// The most recently completed text block, captured at text_end, awaiting
-	// confirmation (ticket 41): AT MOST one at a time, since text blocks stream
-	// serially. If something follows it (a new tool call, new thinking, or another
-	// text block) it is confirmed non-final and its native rendering is hidden
-	// (folded into the card instead). If NOTHING follows before the response
-	// settles, it was the true final answer \u2014 never touched, stays visible exactly
-	// as pi always rendered it. Cleared on every confirm-or-reset boundary so a
-	// stale reference never leaks into the next response.
-	let pendingNarration: NarrationHide | undefined;
-	/** Every narration hide of the CURRENT response, in confirm order (ticket 41
-	 * promotion): when finalize() promotes the last narration back out as the
-	 * answer, the matching record restores its native text block. */
-	let narrationHides: NarrationHide[] = [];
 
 	// Tool-call ids whose native rows the card absorbs (session-lived; never
 	// cleared \u2014 a hidden row must stay hidden for the transcript's life). Ids are
@@ -525,6 +504,18 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// imported class had no live effect — the CLI runs the bundle, ticket 31), applied
 	// ONCE per TUI session, torn down at shutdown (ticket 38: owned by PatchController).
 	const patchController = new PatchController(runtime, hasLiveUI);
+	// Narration lifecycle (ticket 41, review follow-up: owning module): pending
+	// capture at text_end \u2192 confirm-hide \u2192 promote/restore at settle \u2192 rehide on
+	// transcript rebuild, all owned by NarrationController (src/narration-
+	// controller.ts). Deps-injected (same pattern as ModalController) so the
+	// controller never imports pi-tui/patches runtime shapes directly.
+	const narrationController = new NarrationController({
+		hide: hideMessageTextBlock,
+		restore: restoreMessageTextBlock,
+		rehideAfterRebuild: rehideNarrationAfterRebuild,
+		findInstances: findAssistantMessageComponents,
+		requestRender: () => runtime.tui?.requestRender(),
+	});
 	// Regular-mode SGR mouse reporting + click/hover-to-card resolution (ticket 09/24,
 	// split out ticket TBD): owned by MouseController, which shares the same `runtime`
 	// handle and calls back into commitHover/clearHover below (function declarations,
@@ -577,28 +568,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// A pending narration from the PREVIOUS response is moot for a fresh one
 		// (ticket 41) \u2014 drop it without hiding (its native rendering, if it was
 		// genuinely the previous response's final answer, must stay untouched).
-		pendingNarration = undefined;
-		narrationHides = [];
-	}
-
-	/**
-	 * Confirm any pending narration block as NON-final (ticket 41) and hide its
-	 * native rendering, folding it into the card instead. Called the moment ANY
-	 * activity is known to follow it: a new tool call, a new thinking span, or
-	 * another text block starting \u2014 each is proof the pending block was not the
-	 * last thing in the response. No-op when nothing is pending. Best-effort: a
-	 * failed hide (component gone, shape drifted) leaves the text visible natively
-	 * \u2014 the card row still exists from Grouper.textEnd either way, so nothing is
-	 * ever lost, only occasionally shown in both places.
-	 */
-	function confirmNarrationNonFinal(): void {
-		if (!pendingNarration) return;
-		const hidden = hideMessageTextBlock(pendingNarration.instance, pendingNarration.contentIndex);
-		// Record the hide (in confirm order) so settle can RESTORE the last one when
-		// the response ends without a final answer (promotion \u2014 grouping.ts).
-		if (hidden) narrationHides.push(pendingNarration);
-		pendingNarration = undefined;
-		if (hidden) runtime.tui?.requestRender();
+		narrationController.reset();
 	}
 
 	/**
@@ -949,28 +919,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// in-progress span so the interrupted card preserves its partial thought.
 		flushOpenThinking();
 		const { entries: finalEntries, finalAnswer, promoted } = grouper.finalize();
-		// Whatever `pendingNarration` pointed at is now resolved either way (folded
-		// into finalEntries as a narration entry, or popped out as the final answer
-		// above) \u2014 clear it defensively; resetResponse() would anyway (ticket 41).
-		pendingNarration = undefined;
-		// Promotion (owner bug: Cursor trails thinking/tool dumps AFTER the real
-		// answer, and a turn can end on tool calls): the response produced no
-		// trailing text, so finalize pulled the LAST narration back out as the
-		// answer. Its native block was hidden at confirm time \u2014 restore it so the
-		// response is never visibly answerless. Match by text, last record first
-		// (records and entries append in the same order).
-		if (promoted && finalAnswer !== undefined) {
-			for (let i = narrationHides.length - 1; i >= 0; i--) {
-				const record = narrationHides[i];
-				if (record.text === finalAnswer) {
-					if (restoreMessageTextBlock(record.instance, record.contentIndex, finalAnswer)) {
-						runtime.tui?.requestRender();
-					}
-					break;
-				}
-			}
-		}
-		narrationHides = [];
+		// Whatever the pending narration block pointed at is now resolved either way
+		// (folded into finalEntries as a narration entry, or popped out as the final
+		// answer) \u2014 promotion (owner bug: Cursor trails thinking/tool dumps AFTER the
+		// real answer, and a turn can end on tool calls) restores the matching hidden
+		// block's native rendering so the response is never visibly answerless
+		// (NarrationController.settle, ticket 41 \u2014 review follow-up: owning module).
+		narrationController.settle(finalAnswer, promoted);
 
 		if (finalEntries.length === 0) {
 			// Defensive: a card appended on a tool-less path (unreachable today — any
@@ -1198,14 +1153,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 					const proto = Object.getPrototypeOf(instance) as object | null;
 					if (proto) toolRowPatchInstalled = installToolRowHidePatch(proto, (callId) => absorbed.has(callId)) || toolRowPatchInstalled;
 				});
-				const texts = new Set<string>();
+				const cardEntryLists: (readonly CardEntry[])[] = [];
 				for (const entry of ctx.sessionManager.getEntries()) {
 					if (entry.type !== "custom") continue;
 					const custom = entry as CustomEntry<CardModel>;
 					if (custom.customType !== CARD_TYPE) continue;
-					for (const t of narrationTexts(custom.data?.entries ?? [])) texts.add(t);
+					cardEntryLists.push(custom.data?.entries ?? []);
 				}
-				if (texts.size > 0) rehideNarrationAfterRebuild(runtime.tui, texts);
+				narrationController.sweepAfterRebuild(runtime.tui, cardEntryLists);
 				runtime.tui.requestRender();
 			} catch {
 				// Fail open: content stays visible natively (never lost, only doubled).
@@ -1281,7 +1236,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// nothing to re-append.
 		const texts = new Set<string>();
 		for (const model of view.models.values()) for (const t of narrationTexts(model.entries ?? [])) texts.add(t);
-		if (pendingNarration) texts.add(pendingNarration.text);
+		const pendingText = narrationController.pendingText();
+		if (pendingText !== undefined) texts.add(pendingText);
 		if (runtime.tui) rehideNarrationAfterRebuild(runtime.tui, texts);
 
 		const entries = ctx.sessionManager.getEntries();
@@ -1337,7 +1293,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			case "thinking_start":
 				// New thinking starting is proof anything pending was not the final answer
 				// (ticket 41).
-				confirmNarrationNonFinal();
+				narrationController.confirmNonFinal();
 				thinkingStartMs = Date.now();
 				thinkingBuf = "";
 				// Tick while the span streams so the live thought entry can appear at
@@ -1393,7 +1349,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// A NEW text block starting is ALSO proof any pending one wasn't final
 				// (ticket 41) \u2014 two text blocks can stream back to back with nothing
 				// else between them.
-				confirmNarrationNonFinal();
+				narrationController.confirmNonFinal();
 				// A text block opened, but empty/whitespace-only blocks must NOT break
 				// the group (ticket 10): defer the break until non-whitespace content
 				// actually arrives (text_delta / text_end).
@@ -1411,11 +1367,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// moment, since no later message has started yet. Held until either
 				// confirmed non-final (hidden, folded into the card) or the response
 				// settles with nothing after it (the true final answer \u2014 left alone).
-				if (hasNonWhitespace(ame.content)) {
-					const instances = findAssistantMessageComponents(runtime.tui);
-					const instance = instances[instances.length - 1];
-					if (instance) pendingNarration = { instance, contentIndex: ame.contentIndex, text: ame.content.trim() };
-				}
+				narrationController.captureTextEnd(runtime.tui, ame.contentIndex, ame.content);
 				// Reflect the new narration entry in the card NOW (it's already in the
 				// grouper's entries \u2014 snapshot() never withholds it), instead of waiting for
 				// the next unrelated event to happen to call refreshLive.
@@ -1435,7 +1387,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		absorbed.add(event.toolCallId);
 		// A new tool call starting is proof anything pending wasn't the final answer
 		// (ticket 41).
-		confirmNarrationNonFinal();
+		narrationController.confirmNonFinal();
 		const call: ToolCall = {
 			toolCallId: event.toolCallId,
 			name: event.toolName,

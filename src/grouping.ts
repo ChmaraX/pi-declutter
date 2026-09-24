@@ -93,6 +93,13 @@ export type Entry<C> =
 export interface FinalizeResult<C> {
 	entries: Entry<C>[];
 	finalAnswer?: string;
+	/** True when `finalAnswer` was PROMOTED: the response ended on a
+	 * group/thought (no trailing text), so the LAST narration \u2014 already folded
+	 * and natively hidden \u2014 was pulled back out as the answer. The caller must
+	 * restore its native text block (a response must never end answerless just
+	 * because the provider trailed off with thinking/tools \u2014 owner bug: Cursor
+	 * streams a final thinking dump AFTER the real answer). */
+	promoted?: boolean;
 }
 
 export class Grouper<C> {
@@ -162,6 +169,18 @@ export class Grouper<C> {
 			const finalAnswer = last.text;
 			this.entries = this.entries.slice(0, -1);
 			return { entries: this.entries, finalAnswer };
+		}
+		// No trailing text \u2014 the response ended on a group/thought. A response must
+		// still HAVE a visible answer: promote the LAST narration (the newest prose
+		// the model wrote) back out of the fold. Without this, a provider that
+		// trails off with thinking/tool activity after its real answer (Cursor) \u2014
+		// or a turn that just ends on tool calls \u2014 leaves the user with nothing.
+		for (let i = this.entries.length - 1; i >= 0; i--) {
+			const entry = this.entries[i];
+			if (entry.kind === "narration") {
+				this.entries = [...this.entries.slice(0, i), ...this.entries.slice(i + 1)];
+				return { entries: this.entries, finalAnswer: entry.text, promoted: true };
+			}
 		}
 		return { entries: this.entries };
 	}

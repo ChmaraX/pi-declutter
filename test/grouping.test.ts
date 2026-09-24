@@ -103,12 +103,15 @@ test("text_end with content breaks even when no delta carried it, and records a 
 	g.textStart();
 	g.textEnd("All done."); // provider delivered whole block in text_end
 	g.addCall("bash");
-	const { entries } = g.finalize();
-	assert.equal(entries.length, 3);
+	// The response ends on a group with ONE narration \u2014 promotion pulls it back
+	// out as the answer (a response must never be answerless), leaving the two
+	// groups it separated.
+	const { entries, finalAnswer, promoted } = g.finalize();
+	assert.equal(entries.length, 2);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
-	assert.equal(entries[1].kind, "narration");
-	assert.equal(entries[1].kind === "narration" ? entries[1].text : undefined, "All done.");
-	assert.deepEqual(groupCalls(entries[2]), ["bash"]);
+	assert.deepEqual(groupCalls(entries[1]), ["bash"]);
+	assert.equal(finalAnswer, "All done.");
+	assert.equal(promoted, true);
 });
 
 test("a leading text block before any tool does not create an empty group", () => {
@@ -349,20 +352,58 @@ test("force-settle transition: an open group + a flushed open thinking span fina
 // in its chronological spot; the TRUE final answer (nothing follows it) is popped
 // out of the sequence by finalize() and returned separately, never as a card row.
 
-test("a narration block mid-response sits between the groups it separated, in order", () => {
+test("mid-response narration STAYS folded in place when a LATER narration exists to promote", () => {
 	const g = grouper();
 	g.addCall("read");
 	g.textStart();
 	g.textEnd("Checking the config next.");
 	g.addCall("grep");
-	const { entries, finalAnswer } = g.finalize();
-	assert.equal(entries.length, 3);
+	g.textStart();
+	g.textEnd("Found it in biome.json.");
+	g.addCall("bash");
+	// The LAST narration is promoted as the answer; the earlier one keeps its
+	// chronological slot between the groups it separated.
+	const { entries, finalAnswer, promoted } = g.finalize();
+	assert.equal(entries.length, 4);
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 	assert.equal(entries[1].kind, "narration");
 	assert.equal(entries[1].kind === "narration" ? entries[1].text : undefined, "Checking the config next.");
 	assert.deepEqual(groupCalls(entries[2]), ["grep"]);
-	// Nothing trailing \u2014 the response ended on a group, not narration.
+	assert.deepEqual(groupCalls(entries[3]), ["bash"]);
+	assert.equal(finalAnswer, "Found it in biome.json.");
+	assert.equal(promoted, true);
+});
+
+test("promotion: a response ending on a THOUGHT promotes the last narration (Cursor trailing-thinking bug)", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("Reinstall it: pi install npm:@tifan/pi-inline-skills.");
+	g.addThought(2000, "Cursor web fetch: https://npmjs.com/..."); // dump AFTER the answer
+	const { entries, finalAnswer, promoted } = g.finalize();
+	assert.equal(finalAnswer, "Reinstall it: pi install npm:@tifan/pi-inline-skills.");
+	assert.equal(promoted, true);
+	assert.equal(entries.some((e) => e.kind === "narration"), false);
+});
+
+test("promotion: no narration at all \u21d2 no finalAnswer, no promoted flag (tool-only response)", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.addCall("bash");
+	const { entries, finalAnswer, promoted } = g.finalize();
+	assert.equal(entries.length, 1);
 	assert.equal(finalAnswer, undefined);
+	assert.equal(promoted, undefined);
+});
+
+test("promotion: a TRAILING narration still pops un-promoted (native text was never hidden)", () => {
+	const g = grouper();
+	g.addCall("read");
+	g.textStart();
+	g.textEnd("The answer.");
+	const { finalAnswer, promoted } = g.finalize();
+	assert.equal(finalAnswer, "The answer.");
+	assert.equal(promoted, undefined);
 });
 
 test("a trailing text block with nothing after it is popped out as finalAnswer, not a card row", () => {

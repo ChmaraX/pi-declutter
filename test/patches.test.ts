@@ -715,3 +715,28 @@ test("isToolExecutionComponentLike rejects near-misses (missing markExecutionSta
 		false,
 	);
 });
+
+// ── restoreMessageTextBlock (ticket 41 promotion) ──────────────────────────────
+
+import { restoreMessageTextBlock } from "../src/patches.ts";
+
+test("restoreMessageTextBlock: brings a hidden block back AND future native updates keep it visible", () => {
+	const { instance } = makeFakeTarget();
+	instance.updateContent({ content: [{ type: "text", text: "The real answer." }] });
+	assert.equal(hideMessageTextBlock(instance, 0), true);
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), false);
+
+	assert.equal(restoreMessageTextBlock(instance, 0, "The real answer."), true);
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), true);
+
+	// A later native re-render must NOT re-blank it (the index was de-registered).
+	instance.updateContent({ content: [{ type: "text", text: "The real answer." }] });
+	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), true);
+});
+
+test("restoreMessageTextBlock: fails open on a bad index or non-text block", () => {
+	const { instance } = makeFakeTarget();
+	instance.updateContent({ content: [{ type: "thinking", thinking: "hm" }] });
+	assert.equal(restoreMessageTextBlock(instance, 0, "x"), false);
+	assert.equal(restoreMessageTextBlock(instance, 5, "x"), false);
+});

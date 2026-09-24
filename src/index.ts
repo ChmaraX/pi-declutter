@@ -161,6 +161,7 @@ import {
 	hideMessageTextBlock,
 	type PatchTargetInstance,
 	rehideNarrationAfterRebuild,
+	restoreMessageTextBlock,
 } from "./patches.ts";
 import { PatchController } from "./patch-controller.ts";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
@@ -580,6 +581,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// as pi always rendered it. Cleared on every confirm-or-reset boundary so a
 	// stale reference never leaks into the next response.
 	let pendingNarration: { instance: PatchTargetInstance; contentIndex: number; text: string } | undefined;
+	/** Every narration hide of the CURRENT response, in confirm order (ticket 41
+	 * promotion): when finalize() promotes the last narration back out as the
+	 * answer, the matching record restores its native text block. */
+	let narrationHides: { instance: PatchTargetInstance; contentIndex: number; text: string }[] = [];
 
 	// Built-in tool rows folded into settled cards (session-lived; never cleared).
 	const absorbed: AbsorbState = new Set();
@@ -689,6 +694,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// (ticket 41) \u2014 drop it without hiding (its native rendering, if it was
 		// genuinely the previous response's final answer, must stay untouched).
 		pendingNarration = undefined;
+		narrationHides = [];
 	}
 
 	/**
@@ -704,6 +710,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	function confirmNarrationNonFinal(): void {
 		if (!pendingNarration) return;
 		const hidden = hideMessageTextBlock(pendingNarration.instance, pendingNarration.contentIndex);
+		// Record the hide (in confirm order) so settle can RESTORE the last one when
+		// the response ends without a final answer (promotion \u2014 grouping.ts).
+		if (hidden) narrationHides.push(pendingNarration);
 		pendingNarration = undefined;
 		if (hidden) runtime.tui?.requestRender();
 	}
@@ -1213,11 +1222,29 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// no-op, but on an abnormal end (stream died mid-thinking) it captures the
 		// in-progress span so the interrupted card preserves its partial thought.
 		flushOpenThinking();
-		const { entries: finalEntries } = grouper.finalize();
+		const { entries: finalEntries, finalAnswer, promoted } = grouper.finalize();
 		// Whatever `pendingNarration` pointed at is now resolved either way (folded
 		// into finalEntries as a narration entry, or popped out as the final answer
 		// above) \u2014 clear it defensively; resetResponse() would anyway (ticket 41).
 		pendingNarration = undefined;
+		// Promotion (owner bug: Cursor trails thinking/tool dumps AFTER the real
+		// answer, and a turn can end on tool calls): the response produced no
+		// trailing text, so finalize pulled the LAST narration back out as the
+		// answer. Its native block was hidden at confirm time \u2014 restore it so the
+		// response is never visibly answerless. Match by text, last record first
+		// (records and entries append in the same order).
+		if (promoted && finalAnswer !== undefined) {
+			for (let i = narrationHides.length - 1; i >= 0; i--) {
+				const record = narrationHides[i];
+				if (record.text === finalAnswer) {
+					if (restoreMessageTextBlock(record.instance, record.contentIndex, finalAnswer)) {
+						runtime.tui?.requestRender();
+					}
+					break;
+				}
+			}
+		}
+		narrationHides = [];
 
 		if (finalEntries.length === 0) {
 			// Defensive: a card appended on a tool-less path (unreachable today — any

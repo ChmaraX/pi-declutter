@@ -479,6 +479,31 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 }
 
 /**
+ * Undo a hideMessageTextBlock (ticket 41 promotion): de-register the index so
+ * the per-instance wrapper stops blanking it, then re-render with `text`
+ * restored. The original text must be passed back in \u2014 pi's updateContent
+ * stores the blanked copy as lastMessage, so the component itself no longer
+ * has it (we do: the narration entry kept the full text). Render-only and
+ * fail-open, same contract as the hide.
+ */
+export function restoreMessageTextBlock(instance: PatchTargetInstance, contentIndex: number, text: string): boolean {
+	const content = instance.lastMessage?.content;
+	if (!Array.isArray(content) || contentIndex < 0 || contentIndex >= content.length) return false;
+	const block = content[contentIndex] as { type?: unknown; text?: unknown };
+	if (!block || block.type !== "text" || typeof block.text !== "string") return false;
+	if (typeof instance.updateContent !== "function") return false;
+	hiddenBlockIndices.get(instance)?.delete(contentIndex);
+	const restored = content.slice();
+	restored[contentIndex] = { ...block, text };
+	try {
+		instance.updateContent({ ...instance.lastMessage, content: restored });
+	} catch {
+		return false;
+	}
+	return true;
+}
+
+/**
  * Re-apply hideMessageTextBlock across an ENTIRE live tree, for every text
  * block whose trimmed content matches one of `texts` (ticket 41). Needed after
  * ANY full transcript rebuild \u2014 compaction, /resume, /fork \u2014 rebuilds every

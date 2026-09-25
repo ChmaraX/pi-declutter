@@ -22,6 +22,8 @@ interface OpenedOverlay {
 function makeFakeCtx() {
 	const opens: OpenedOverlay[] = [];
 	const statuses: Array<[string, string | undefined]> = [];
+	const toolsExpandedChanges: boolean[] = [];
+	let toolsExpanded = false;
 	const ctx = {
 		mode: "tui",
 		hasUI: true,
@@ -35,8 +37,11 @@ function makeFakeCtx() {
 					resolveFn = res;
 				});
 				const overlay: OpenedOverlay = { hidden: false, close: resolveFn };
+				const keybindings = {
+					matches: (data: string, action: string) => action === "app.tools.expand" && data === "configured-expand",
+				};
 				// Invoke the factory as pi would; the 4th arg is `done` (resolves custom()).
-				factory({}, { fg: (_r: string, t: string) => t, bold: (t: string) => t }, {}, () => resolveFn());
+				factory({}, { fg: (_r: string, t: string) => t, bold: (t: string) => t }, keybindings, () => resolveFn());
 				options.onHandle?.({
 					hide() {
 						overlay.hidden = true;
@@ -48,9 +53,16 @@ function makeFakeCtx() {
 			setStatus(key: string, value: string | undefined) {
 				statuses.push([key, value]);
 			},
+			getToolsExpanded() {
+				return toolsExpanded;
+			},
+			setToolsExpanded(expanded: boolean) {
+				toolsExpanded = expanded;
+				toolsExpandedChanges.push(expanded);
+			},
 		},
 	};
-	return { ctx, opens, statuses };
+	return { ctx, opens, statuses, toolsExpandedChanges };
 }
 
 function makeModel(entries: CardModel["entries"]): CardModel {
@@ -74,8 +86,10 @@ function fakeItem(): ShapeItem {
 }
 
 function makeController(model: CardModel | undefined) {
-	const { ctx, opens, statuses } = makeFakeCtx();
+	const { ctx, opens, statuses, toolsExpandedChanges } = makeFakeCtx();
 	let copied: string | undefined;
+	let matchesToolsExpand: ((data: string) => boolean) | undefined;
+	let onToolsExpand: (() => void) | undefined;
 	const contents: import("../src/modal.ts").ModalContent[] = [];
 	const controller = new ModalController({
 		getUiCtx: () => ctx as never,
@@ -86,12 +100,23 @@ function makeController(model: CardModel | undefined) {
 			copied = t;
 		},
 		requestRender: () => {},
-		makeModal: (content) => {
+		makeModal: (content, _theme, _done, _onCopy, matches, onToggle) => {
 			contents.push(content);
+			matchesToolsExpand = matches;
+			onToolsExpand = onToggle;
 			return { setTerminalHeight() {}, setTerminalWidth() {}, showCopied() {}, clearCopied() {} };
 		},
 	});
-	return { controller, opens, statuses, getCopied: () => copied, contents };
+	return {
+		controller,
+		opens,
+		statuses,
+		toolsExpandedChanges,
+		getCopied: () => copied,
+		contents,
+		matchesToolsExpand: (data: string) => matchesToolsExpand?.(data) ?? false,
+		toggleToolsExpand: () => onToolsExpand?.(),
+	};
 }
 
 test("ModalController: opens a member modal", () => {
@@ -163,6 +188,18 @@ test("ModalController: teardown closes an open modal", () => {
 	controller.teardown();
 	assert.equal(opens[0].hidden, true);
 	assert.equal(controller.isOpen(), false);
+});
+
+test("ModalController: forwards the configured tool-expansion action through the official UI state", () => {
+	const { controller, matchesToolsExpand, toggleToolsExpand, toolsExpandedChanges } = makeController(groupModel(fakeItem()));
+	controller.openMemberModal("card", 0, 0);
+	assert.equal(matchesToolsExpand("ctrl+o"), false, "the physical key is not hard-coded");
+	assert.equal(matchesToolsExpand("configured-expand"), true);
+
+	toggleToolsExpand();
+	toggleToolsExpand();
+	assert.deepEqual(toolsExpandedChanges, [true, false]);
+	assert.equal(controller.isOpen(), true, "toggling does not close the modal");
 });
 
 test("copy feedback is contained to the modal: showCopied after the copy, clearCopied on the timer", async () => {

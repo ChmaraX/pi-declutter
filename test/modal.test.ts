@@ -11,6 +11,7 @@ import { test } from "node:test";
 import type { ShapeItem, ShapeNarration, ShapeThought } from "../src/card-shape.ts";
 import {
 	clampScrollTop,
+	handleToolsExpandInput,
 	itemModalContent,
 	narrationModalContent,
 	scrollHint,
@@ -31,6 +32,17 @@ function thought(overrides: Partial<ShapeThought> = {}): ShapeThought {
 function narration(overrides: Partial<ShapeNarration> = {}): ShapeNarration {
 	return { text: "", summary: "", ...overrides };
 }
+
+// ── modal input ──────────────────────────────────────────────────────────────
+
+test("handleToolsExpandInput uses the configured matcher and handles only that action", () => {
+	let toggles = 0;
+	const matches = (data: string) => data === "configured-expand";
+	assert.equal(handleToolsExpandInput("ctrl+o", matches, () => toggles++), false);
+	assert.equal(toggles, 0);
+	assert.equal(handleToolsExpandInput("configured-expand", matches, () => toggles++), true);
+	assert.equal(toggles, 1);
+});
 
 // ── itemModalContent ─────────────────────────────────────────────────────────
 

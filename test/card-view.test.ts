@@ -27,6 +27,7 @@ import {
 	type HoverState,
 	isAllExpanded,
 	setAllExpanded,
+	syncNativeExpansion,
 	type ViewState,
 } from "../src/card-view.ts";
 
@@ -137,6 +138,65 @@ test("isAllExpanded ignores thought/narration entries (only group members toggle
 	]);
 	const cv = getCardView(view, "card-1");
 	assert.equal(isAllExpanded(model, cv), true, "no group entries means nothing left to expand");
+});
+
+test("syncNativeExpansion maps native collapsed to the default card tree", () => {
+	const model = twoMemberGroupModel();
+	const cv = { fullCollapsed: true, membersVisible: new Set([0]), nativeExpanded: true };
+	syncNativeExpansion(model, cv, false);
+	assert.equal(cv.fullCollapsed, false);
+	assert.deepEqual([...cv.membersVisible], []);
+	assert.equal(cv.nativeExpanded, false);
+});
+
+test("syncNativeExpansion maps native expanded to every currently expandable group", () => {
+	const model = makeModel([
+		{
+			kind: "group",
+			group: { label: "Ran commands", counts: "2 commands", items: [fakeItem(), fakeItem()] },
+		},
+		{ kind: "thought", thought: { ms: 2000, summary: "s", tail: ["x"], fullText: "x" } },
+		{
+			kind: "group",
+			group: { label: "Read file", counts: "1 file", items: [fakeItem({ label: "Read file" })] },
+		},
+	]);
+	const cv = { fullCollapsed: true, membersVisible: new Set<number>() };
+	syncNativeExpansion(model, cv, true);
+	assert.equal(cv.fullCollapsed, false);
+	assert.deepEqual([...cv.membersVisible], [0], "only the multi-member group expands");
+});
+
+test("syncNativeExpansion preserves local deviations until the native flag changes", () => {
+	const model = twoMemberGroupModel();
+	const cv = { fullCollapsed: false, membersVisible: new Set<number>(), nativeExpanded: false };
+	cv.fullCollapsed = true; // local mouse / Ctrl+Shift+A deviation
+	syncNativeExpansion(model, cv, false);
+	assert.equal(cv.fullCollapsed, true, "an ordinary rebuild with the same native state preserves the local view");
+
+	syncNativeExpansion(model, cv, true);
+	assert.equal(cv.fullCollapsed, false);
+	assert.deepEqual([...cv.membersVisible], [0], "the next native toggle overwrites the local deviation");
+});
+
+test("syncNativeExpansion expands newly expandable live groups without reopening a locally collapsed group", () => {
+	const model = makeModel([
+		{ kind: "group", group: { label: "Ran command", counts: "1 command", items: [fakeItem()] } },
+	]);
+	const cv = { fullCollapsed: false, membersVisible: new Set<number>() };
+	syncNativeExpansion(model, cv, true);
+	assert.deepEqual([...cv.membersVisible], []);
+
+	const entry = model.entries[0];
+	assert.equal(entry.kind, "group");
+	if (entry.kind !== "group") return;
+	entry.group.items.push(fakeItem({ label: "Ran pwd" }));
+	syncNativeExpansion(model, cv, true);
+	assert.deepEqual([...cv.membersVisible], [0], "the group expands when its second live member arrives");
+
+	cv.membersVisible.delete(0);
+	syncNativeExpansion(model, cv, true);
+	assert.deepEqual([...cv.membersVisible], [], "the same native state preserves a later local collapse");
 });
 
 // ── Hover commit/clear ──────────────────────────────────────────────────────

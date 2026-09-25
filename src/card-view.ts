@@ -37,6 +37,10 @@ export const CARD_BOX_PADDING_X = 1;
 export interface CardView {
 	fullCollapsed: boolean;
 	membersVisible: Set<number>;
+	/** Last native tool-expansion state applied to this card. */
+	nativeExpanded?: boolean;
+	/** Expandable entry indices already seen while native expansion is on. */
+	nativeExpandables?: Set<number>;
 }
 
 export interface ViewState {
@@ -77,6 +81,31 @@ export function setAllExpanded(model: CardModel, cv: CardView): void {
 	model.entries.forEach((entry, k) => {
 		if (entry.kind === "group" && groupHasMembersToggle(entry.group)) cv.membersVisible.add(k);
 	});
+}
+
+/** Apply Pi's global tool-expansion state and include new live entries. */
+export function syncNativeExpansion(model: CardModel, cv: CardView, expanded: boolean): void {
+	const expandables = new Set<number>();
+	model.entries.forEach((entry, k) => {
+		if (entry.kind === "group" && groupHasMembersToggle(entry.group)) expandables.add(k);
+	});
+
+	if (cv.nativeExpanded !== expanded) {
+		cv.nativeExpanded = expanded;
+		cv.nativeExpandables = expandables;
+		if (expanded) {
+			setAllExpanded(model, cv);
+		} else {
+			cv.fullCollapsed = false;
+			cv.membersVisible.clear();
+		}
+		return;
+	}
+
+	if (!expanded) return;
+	const known = cv.nativeExpandables ?? new Set<number>();
+	for (const k of expandables) if (!known.has(k)) cv.membersVisible.add(k);
+	cv.nativeExpandables = expandables;
 }
 
 // Which clickable node the mouse is currently over. Session-lived, shared
@@ -212,6 +241,7 @@ export class ActivityCard implements Component {
 					interrupted: this.model.interrupted,
 				};
 		const cv = getCardView(this.view, this.cardId);
+		if (cv.nativeExpanded !== undefined) syncNativeExpansion(this.model, cv, cv.nativeExpanded);
 		const expansion: CardExpansion = {
 			fullCollapsed: cv.fullCollapsed,
 			isMembersVisible: (k) => cv.membersVisible.has(k),

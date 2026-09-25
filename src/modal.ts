@@ -28,6 +28,17 @@ export interface ModalContent {
 	full: boolean;
 }
 
+/** Handle Pi's configured tool-expansion action before modal-local input. */
+export function handleToolsExpandInput(
+	data: string,
+	matchesToolsExpand: (data: string) => boolean,
+	onToolsExpand: () => void,
+): boolean {
+	if (!matchesToolsExpand(data)) return false;
+	onToolsExpand();
+	return true;
+}
+
 /** Compose the modal content for a tool member row. `fullText`, when provided,
  * is the untruncated output (from the bash fullOutputPath or the raised capture
  * cap); otherwise the shaped preview tail is used. A command tool leads its body

@@ -43,9 +43,15 @@ export interface ModalControllerDeps {
 	copyToClipboard(text: string): Promise<void>;
 	/** Repaint request so the in-modal copy feedback shows/clears promptly. */
 	requestRender(): void;
-	/** Build the overlay component (injected so the controller does not import the
-	 * pi-tui-backed modal-view). `done` closes the overlay; `onCopy` copies. */
-	makeModal(content: ModalContent, theme: unknown, done: (r: void) => void, onCopy: () => void): ModalComponent;
+	/** Build the overlay component without importing the pi-tui-backed view. */
+	makeModal(
+		content: ModalContent,
+		theme: unknown,
+		done: (r: void) => void,
+		onCopy: () => void,
+		matchesToolsExpand: (data: string) => boolean,
+		onToolsExpand: () => void,
+	): ModalComponent;
 }
 
 export class ModalController {
@@ -97,8 +103,15 @@ export class ModalController {
 		const modalWidth = Math.min(Math.max(40, Math.floor(cols * 0.8)), MODAL_MAX_WIDTH_COLS);
 		void ctx.ui
 			.custom<void>(
-				(_tui, theme, _kb, done) => {
-					modal = this.deps.makeModal(content, theme, done, () => this.copyModal(content, modal));
+				(_tui, theme, keybindings, done) => {
+					modal = this.deps.makeModal(
+						content,
+						theme,
+						done,
+						() => this.copyModal(content, modal),
+						(data) => keybindings.matches(data, "app.tools.expand"),
+						() => ctx.ui.setToolsExpanded(!ctx.ui.getToolsExpanded()),
+					);
 					return modal as never;
 				},
 				{

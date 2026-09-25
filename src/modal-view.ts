@@ -11,7 +11,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Focusable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
-import { clampScrollTop, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
+import { clampScrollTop, handleToolsExpandInput, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
 import { styleTone } from "./styling.ts";
 
 /** Max body rows the modal shows before scrolling. The overlay's maxHeight:80%
@@ -69,15 +69,26 @@ export class OutputModal implements Focusable {
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
 	private readonly onCopy: () => void;
+	private readonly matchesToolsExpand: (data: string) => boolean;
+	private readonly onToolsExpand: () => void;
 	/** True while the footer shows "✓ Copied" (set/cleared by ModalController
 	 * around its feedback timer). */
 	private copiedVisible = false;
 
-	constructor(content: ModalContent, theme: Theme, done: (result: void) => void, onCopy: () => void) {
+	constructor(
+		content: ModalContent,
+		theme: Theme,
+		done: (result: void) => void,
+		onCopy: () => void,
+		matchesToolsExpand: (data: string) => boolean,
+		onToolsExpand: () => void,
+	) {
 		this.content = content;
 		this.theme = theme;
 		this.done = done;
 		this.onCopy = onCopy;
+		this.matchesToolsExpand = matchesToolsExpand;
+		this.onToolsExpand = onToolsExpand;
 	}
 
 	/** Called from the overlay's `visible` callback with the current terminal
@@ -112,6 +123,7 @@ export class OutputModal implements Focusable {
 	invalidate(): void {}
 
 	handleInput(data: string): void {
+		if (handleToolsExpandInput(data, this.matchesToolsExpand, this.onToolsExpand)) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "q")) {
 			this.done(undefined);
 			return;

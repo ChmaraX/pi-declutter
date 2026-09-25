@@ -188,6 +188,7 @@ import {
 	type HoverState,
 	isAllExpanded,
 	setAllExpanded,
+	syncNativeExpansion,
 	type ViewState,
 } from "./card-view.ts";
 
@@ -849,7 +850,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		readFullOutput,
 		copyToClipboard,
 		requestRender: () => runtime.tui?.requestRender(),
-		makeModal: (content, theme, done, onCopy) => new OutputModal(content, theme as Theme, done, onCopy),
+		makeModal: (content, theme, done, onCopy, matchesToolsExpand, onToolsExpand) =>
+			new OutputModal(content, theme as Theme, done, onCopy, matchesToolsExpand, onToolsExpand),
 	});
 
 	function onCardMouse(id: string, event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -1004,7 +1006,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ── Card renderer (safe to register in any mode; no-ops in print) ─────────
 	pi.registerEntryRenderer<CardModel>(
 		CARD_TYPE,
-		(entry: CustomEntry<CardModel>, _options: EntryRenderOptions, theme: Theme): Component | undefined => {
+		(entry: CustomEntry<CardModel>, options: EntryRenderOptions, theme: Theme): Component | undefined => {
 			// Prefer the in-memory registry over the persisted snapshot (ticket 25 layer
 			// 1). In-process the registry holds the live/settled model we mutate; only a
 			// fresh-process resume misses it, and then entry.data is the persisted
@@ -1027,6 +1029,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				view.models.set(entry.id, model);
 			}
 			if (!view.cards.has(entry.id)) view.order.push(entry.id);
+			syncNativeExpansion(model, getCardView(view, entry.id), options.expanded);
 			const stale = staleCards.has(entry.id);
 			// A failure no longer auto-expands the card (ticket 18, Codex-faithful):
 			// failures stay calm — the per-call signal is the output-box `Exit code N`

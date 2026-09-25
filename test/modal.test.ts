@@ -11,6 +11,7 @@ import { test } from "node:test";
 import type { ShapeItem, ShapeNarration, ShapeThought } from "../src/card-shape.ts";
 import {
 	clampScrollTop,
+	followScrollTop,
 	handleToolsExpandInput,
 	itemModalContent,
 	narrationModalContent,
@@ -115,6 +116,12 @@ test("a thought modal with no summary omits the trailing separator", () => {
 	assert.equal(content.title, "Thought 1s");
 });
 
+test("a still-streaming thought titles like its card row", () => {
+	const content = thoughtModalContent(thought({ ms: 4000, live: true, summary: "not final yet" }), "so far");
+	assert.equal(content.title, "Thinking\u2026 \u00b7 4s");
+	assert.equal(content.copyText, "so far");
+});
+
 // ── narrationModalContent (ticket 41) ────────────────────────────────────────────
 
 test("a narration modal titles with the summary and a Narration caption, full body + copy", () => {
@@ -159,6 +166,17 @@ test("clampScrollTop keeps top within [0, total - viewport]", () => {
 	assert.equal(clampScrollTop(50, 100, 20), 50);
 	assert.equal(clampScrollTop(200, 100, 20), 80); // max top = 100 - 20
 	assert.equal(clampScrollTop(5, 10, 20), 0); // fits entirely → no scroll
+});
+
+test("followScrollTop follows the tail from the bottom and keeps a scrolled-up reader in place", () => {
+	// At the bottom of 30 rows (viewport 10): follow to the new bottom of 50.
+	assert.equal(followScrollTop(20, 30, 50, 10), 40);
+	// Everything fit before (top 0 is the bottom): follow once it overflows.
+	assert.equal(followScrollTop(0, 4, 25, 10), 15);
+	// Scrolled up to read: stay put.
+	assert.equal(followScrollTop(5, 30, 50, 10), 5);
+	// Body shrank: clamp instead of leaving blank space.
+	assert.equal(followScrollTop(5, 30, 8, 10), 0);
 });
 
 test("visibleSlice returns the clamped window of body lines", () => {

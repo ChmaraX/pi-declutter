@@ -781,6 +781,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			const details = calls.length > 0 ? bucketCountsText(calls) : "";
 			if (uiCtx) uiCtx.ui.setWorkingMessage(details ? `Working · ${details}` : "Working");
 		}
+		// An open modal follows its row while it streams.
+		modalController.refresh();
 		runtime.tui?.requestRender();
 	}
 
@@ -1034,6 +1036,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 
 		clearLive();
+		// A modal opened on a still-live row shows that row's final content.
+		modalController.refresh();
 
 		// Debug (ticket 34): env-gated live transcript dump — measures the REAL
 		// bundle components so we stop guessing dist-vs-bundle. Off by default.
@@ -1458,9 +1462,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		refreshLive();
 	});
 
-	on("tool_execution_update", (_event: ToolExecutionUpdateEvent, ctx: ExtensionContext) => {
-		// Updates don't change the ledger shape; the live elapsed clock is driven
-		// by the timer. Nothing to accumulate here.
+	on("tool_execution_update", (event: ToolExecutionUpdateEvent, ctx: ExtensionContext) => {
+		// Tools that stream (bash) send their output so far; keep it on the call so a
+		// modal opened while the tool runs shows it. The live timer repaints.
+		const call = ledger.get(event.toolCallId);
+		if (!call || call.endMs !== undefined) return;
+		const text = extractResultText(event.partialResult);
+		if (text.length > 0) call.fullOutput = text.slice(0, MAX_MODAL_CAPTURE);
 	});
 
 	on("tool_execution_end", (event: ToolExecutionEndEvent, ctx: ExtensionContext) => {
@@ -1473,7 +1481,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			// at MAX_MODAL_CAPTURE; truncated command output additionally sets
 			// fullOutputPath (tool_result below), read lazily on open and preferred.
 			const text = extractResultText(event.result);
-			if (text.length > 0) call.fullOutput = text.slice(0, MAX_MODAL_CAPTURE);
+			// The final result replaces any partial output streamed while it ran.
+			call.fullOutput = text.length > 0 ? text.slice(0, MAX_MODAL_CAPTURE) : undefined;
 			// The short INLINE preview stays gated to command/search calls (ticket 12
 			// req 5): read/edit/write target lines say enough, file bodies are huge.
 			if (isPreviewTool(call.name)) {

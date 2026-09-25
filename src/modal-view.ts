@@ -11,7 +11,15 @@
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { type Focusable, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
-import { clampScrollTop, handleToolsExpandInput, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
+import {
+	clampScrollTop,
+	followScrollTop,
+	handleToolsExpandInput,
+	type ModalContent,
+	scrollHint,
+	visibleSlice,
+	wrapBody,
+} from "./modal.ts";
 import { styleTone } from "./styling.ts";
 
 /** Max body rows the modal shows before scrolling. The overlay's maxHeight:80%
@@ -52,7 +60,7 @@ export class OutputModal implements Focusable {
 	/** Content width the body was last wrapped/scrolled against, so handleInput's
 	 * paging math uses the same total row count render() produced. */
 	private lastInnerContentWidth = 78;
-	private readonly content: ModalContent;
+	private content: ModalContent;
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
 	private readonly onCopy: () => void;
@@ -82,6 +90,17 @@ export class OutputModal implements Focusable {
 	 * height so render() can size the body to the actual overlay height. */
 	setTerminalHeight(height: number): void {
 		this.termHeight = height;
+	}
+
+	/** Replace the content in place while the modal stays open (a live thinking
+	 * span or running tool keeps streaming). Scroll follows the tail only if the
+	 * reader was already at the bottom. */
+	setContent(content: ModalContent): void {
+		const oldTotal = this.bodyRows(this.lastInnerContentWidth).length;
+		this.content = content;
+		this.wrappedForWidth = -1;
+		const newTotal = this.bodyRows(this.lastInnerContentWidth).length;
+		this.top = followScrollTop(this.top, oldTotal, newTotal, this.lastViewport);
 	}
 
 	showCopied(): void {

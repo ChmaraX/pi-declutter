@@ -90,9 +90,12 @@ type Enrich = (
 	item?: ShapeItem,
 ) => import("../src/modal.ts").ModalContent;
 
-function makeController(model: CardModel | undefined, enrich?: Enrich) {
+function makeController(model: CardModel | undefined, enrich?: Enrich, readFullOutput: () => string | undefined = () => undefined) {
 	const { ctx, opens, statuses, toolsExpandedChanges } = makeFakeCtx();
 	let copied: string | undefined;
+	let renders = 0;
+	let onCopy: (() => void) | undefined;
+	const updates: import("../src/modal.ts").ModalContent[] = [];
 	let matchesToolsExpand: ((data: string) => boolean) | undefined;
 	let onToolsExpand: (() => void) | undefined;
 	const contents: import("../src/modal.ts").ModalContent[] = [];
@@ -101,16 +104,27 @@ function makeController(model: CardModel | undefined, enrich?: Enrich) {
 		getUiCtx: () => ctx as never,
 		hasLiveUI: (c) => (c as { mode: string }).mode === "tui",
 		getModel: () => model,
-		readFullOutput: () => undefined,
+		readFullOutput,
 		copyToClipboard: async (t: string) => {
 			copied = t;
 		},
-		requestRender: () => {},
-		makeModal: (content, _theme, _done, _onCopy, matches, onToggle) => {
+		requestRender: () => {
+			renders++;
+		},
+		makeModal: (content, _theme, _done, copy, matches, onToggle) => {
 			contents.push(content);
+			onCopy = copy;
 			matchesToolsExpand = matches;
 			onToolsExpand = onToggle;
-			return { setTerminalHeight() {}, setTerminalWidth() {}, showCopied() {}, clearCopied() {} };
+			return {
+				setTerminalHeight() {},
+				setTerminalWidth() {},
+				showCopied() {},
+				clearCopied() {},
+				setContent(next) {
+					updates.push(next);
+				},
+			};
 		},
 	});
 	return {
@@ -119,6 +133,9 @@ function makeController(model: CardModel | undefined, enrich?: Enrich) {
 		statuses,
 		toolsExpandedChanges,
 		getCopied: () => copied,
+		copy: () => onCopy?.(),
+		renders: () => renders,
+		updates,
 		contents,
 		matchesToolsExpand: (data: string) => matchesToolsExpand?.(data) ?? false,
 		toggleToolsExpand: () => onToolsExpand?.(),
@@ -255,6 +272,7 @@ test("copy feedback is contained to the modal: showCopied after the copy, clearC
 				clearCopied() {
 					calls.push("clear");
 				},
+				setContent() {},
 			};
 		},
 	});
@@ -265,4 +283,111 @@ test("copy feedback is contained to the modal: showCopied after the copy, clearC
 	assert.deepEqual(calls, ["show"]);
 	assert.ok(renders >= 1);
 	controller.teardown(); // clears the pending feedback timer (no dangling handle)
+});
+
+// ── following a streaming row ─────────────────────────────────────────────────
+
+function liveThought(fullText: string, ms: number, live = true): CardModel["entries"][number] {
+	return { kind: "thought", thought: { ms, summary: live ? "" : "Planning", tail: [], fullText, live } };
+}
+
+test("refresh: a modal opened on a live thinking span fills in as the text streams, then settles once", () => {
+	const model = makeModel([liveThought("", 1000)]);
+	const { controller, contents, updates, renders } = makeController(model);
+	controller.openThoughtModal("card", 0);
+	assert.deepEqual(contents[0].body, []);
+	assert.equal(contents[0].title, "Thinking\u2026 \u00b7 1s");
+
+	model.entries = [liveThought("First idea", 2000)];
+	controller.refresh();
+	assert.equal(updates.at(-1)?.copyText, "First idea");
+
+	model.entries = [liveThought("First idea\nSecond idea", 3000, false)];
+	controller.refresh();
+	assert.equal(updates.at(-1)?.copyText, "First idea\nSecond idea");
+	assert.equal(updates.at(-1)?.title, "Thought 3s \u00b7 Planning");
+	const settled = updates.length;
+	assert.ok(renders() >= 2);
+
+	// Settled: nothing changes after, so no further updates.
+	model.entries = [liveThought("First idea\nSecond idea\nlater", 4000, false)];
+	controller.refresh();
+	assert.equal(updates.length, settled);
+});
+
+test("refresh: a ticking duration with unchanged text updates the title only", () => {
+	const model = makeModel([liveThought("same text", 1000)]);
+	const { controller, updates } = makeController(model, (content) => ({ ...content, bodyStyled: ["styled"] }));
+	controller.openThoughtModal("card", 0);
+	model.entries = [liveThought("same text", 2000)];
+	controller.refresh();
+	assert.equal(updates.at(-1)?.title, "Thinking\u2026 \u00b7 2s");
+	assert.deepEqual(updates.at(-1)?.bodyStyled, ["styled"]);
+	// Identical content: no update at all.
+	const count = updates.length;
+	controller.refresh();
+	assert.equal(updates.length, count);
+});
+
+test("refresh: a different span at the same index leaves the last content in place", () => {
+	const model = makeModel([liveThought("Reasoning about A", 1000)]);
+	const { controller, updates } = makeController(model);
+	controller.openThoughtModal("card", 0);
+	model.entries = [liveThought("Something else entirely", 2000)];
+	controller.refresh();
+	model.entries = [{ kind: "group", group: { label: "Ran ls", counts: "1 command", items: [fakeItem()] } }];
+	controller.refresh();
+	assert.equal(updates.length, 0);
+});
+
+test("refresh: a running tool's modal shows its partial output, then the final output once", () => {
+	const running: ShapeItem = { ...fakeItem(), running: true, preview: [], fullOutput: "line 1" };
+	const model = groupModel(running);
+	const { controller, contents, updates } = makeController(model, undefined, () => "final from file");
+	controller.openMemberModal("card", 0, 0);
+	assert.ok(contents[0].copyText.includes("line 1"));
+
+	model.entries = [{ kind: "group", group: { label: "Ran ls", counts: "1 command", items: [{ ...running, fullOutput: "line 1\nline 2" }] } }];
+	controller.refresh();
+	assert.ok(updates.at(-1)?.copyText.includes("line 2"));
+
+	model.entries = [{ kind: "group", group: { label: "Ran ls", counts: "1 command", items: [{ ...running, running: false }] } }];
+	controller.refresh();
+	assert.ok(updates.at(-1)?.copyText.includes("final from file"));
+	const count = updates.length;
+	controller.refresh();
+	assert.equal(updates.length, count);
+});
+
+test("refresh: a different tool now at the same position is not swapped in", () => {
+	const running: ShapeItem = { ...fakeItem(), running: true, fullOutput: "x" };
+	const model = groupModel(running);
+	const { controller, updates } = makeController(model);
+	controller.openMemberModal("card", 0, 0);
+	model.entries = [{ kind: "group", group: { label: "Read a.ts", counts: "1 file", items: [{ ...running, label: "Read a.ts", fullOutput: "y" }] } }];
+	controller.refresh();
+	assert.equal(updates.length, 0);
+});
+
+test("refresh: copy takes the latest content, and closed or narration modals never refresh", async () => {
+	const model = makeModel([liveThought("v1", 1000)]);
+	const { controller, updates, copy, getCopied } = makeController(model);
+	controller.openThoughtModal("card", 0);
+	model.entries = [liveThought("v1 v2", 2000)];
+	controller.refresh();
+	copy();
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(getCopied(), "v1 v2");
+
+	controller.closeModal();
+	model.entries = [liveThought("v1 v2 v3", 3000)];
+	controller.refresh();
+	assert.equal(updates.length, 1);
+
+	const narration = makeController(makeModel([{ kind: "narration", narration: { text: "note", summary: "note" } }]));
+	narration.controller.openNarrationModal("card", 0);
+	narration.controller.refresh();
+	assert.equal(narration.updates.length, 0);
+	controller.teardown();
+	narration.controller.teardown();
 });

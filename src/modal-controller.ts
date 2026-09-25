@@ -4,7 +4,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CardModel } from "./card-model.ts";
-import type { CardEntry, ShapeItem } from "./card-shape.ts";
+import type { CardEntry, ShapeItem, ShapeThought } from "./card-shape.ts";
 import { itemModalContent, type ModalContent, narrationModalContent, thoughtModalContent } from "./modal.ts";
 
 /** A live modal component the controller shows in the overlay. Kept as an
@@ -17,6 +17,25 @@ export interface ModalComponent {
 	 * pane rather than pi's status bar. */
 	showCopied(): void;
 	clearCopied(): void;
+	/** Replace the displayed content while the modal stays open. */
+	setContent(content: ModalContent): void;
+}
+
+/** The card row an open modal shows, so it can follow that row as it streams. */
+type ModalTarget =
+	| { kind: "member"; cardId: string; entryIndex: number; itemIndex: number; label: string }
+	| { kind: "thought"; cardId: string; entryIndex: number }
+	| { kind: "narration" };
+
+interface OpenModal {
+	target: ModalTarget;
+	component: ModalComponent | undefined;
+	/** Unenriched content last shown; the change check compares against it. */
+	raw: ModalContent;
+	/** What `c` copies: always the latest content. */
+	content: ModalContent;
+	/** The row settled and its final content has been shown; nothing changes after. */
+	finished: boolean;
 }
 
 /** Minimal overlay handle: hide() closes the overlay (a swap or teardown). */
@@ -59,6 +78,7 @@ export interface ModalControllerDeps {
 
 export class ModalController {
 	private modalHandle: ModalOverlayHandle | undefined;
+	private open: OpenModal | undefined;
 	private modalCopyTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly deps: ModalControllerDeps;
 
@@ -79,6 +99,7 @@ export class ModalController {
 			// Overlay may already be gone; ignore.
 		}
 		this.modalHandle = undefined;
+		this.open = undefined;
 	}
 
 	/** Look up the CardModel entry a node addresses, tolerant of a stale click after
@@ -88,11 +109,14 @@ export class ModalController {
 		return model?.entries[entryIndex];
 	}
 
-	showModal(content: ModalContent): void {
+	private showModal(target: ModalTarget, raw: ModalContent, finished: boolean, item?: ShapeItem): void {
 		const ctx = this.deps.getUiCtx();
 		if (!ctx || !this.deps.hasLiveUI(ctx)) return;
 		// Swap semantics: close any open modal before opening the next.
 		this.closeModal();
+		const content = this.enrich(raw, item);
+		const open: OpenModal = { target, component: undefined, raw, content, finished };
+		this.open = open;
 		// custom() resolves when the overlay closes; we don't need the result. The
 		// onHandle callback captures the handle so a later open can swap it, and
 		// teardown can force-close it.
@@ -111,10 +135,11 @@ export class ModalController {
 						content,
 						theme,
 						done,
-						() => this.copyModal(content, modal),
+						() => this.copyModal(open.content, modal),
 						(data) => keybindings.matches(data, "app.tools.expand"),
 						() => ctx.ui.setToolsExpanded(!ctx.ui.getToolsExpanded()),
 					);
+					open.component = modal;
 					return modal as never;
 				},
 				{
@@ -142,7 +167,62 @@ export class ModalController {
 				// OutputModal (≤64KB) is retained until process exit — bounded and
 				// user-paced, accepted as a known minor.
 				this.modalHandle = undefined;
+				if (this.open === open) this.open = undefined;
 			});
+	}
+
+	/**
+	 * Push the latest content of the row the open modal shows. Called whenever
+	 * the live card re-renders, so a modal opened on a still-streaming thinking
+	 * span or a running tool keeps filling in instead of freezing at the moment
+	 * it was opened. Once the row settles, its final content is shown once and
+	 * the modal stops following. A row that disappeared or turned into something
+	 * else (entries can shift at settle) leaves the last content in place rather
+	 * than swapping in an unrelated row.
+	 */
+	refresh(): void {
+		const open = this.open;
+		if (!open || open.finished || !open.component) return;
+		const next = this.nextContent(open);
+		if (!next) return;
+		open.finished = next.finished;
+		const bodyChanged = next.raw.copyText !== open.raw.copyText;
+		if (!bodyChanged && next.raw.title === open.raw.title && next.raw.badge?.text === open.raw.badge?.text) return;
+		// Re-enrich (highlighting, markdown) only when the body itself changed; a
+		// ticking duration in the title reuses the styled body as is.
+		const content = bodyChanged
+			? this.enrich(next.raw, next.item)
+			: { ...open.content, title: next.raw.title, badge: next.raw.badge };
+		open.raw = next.raw;
+		open.content = content;
+		open.component.setContent(content);
+		this.deps.requestRender();
+	}
+
+	/** Rebuild the open target's content from the current card, or undefined when
+	 * the row is gone, changed identity, or has nothing new to show. */
+	private nextContent(
+		open: OpenModal,
+	): { raw: ModalContent; finished: boolean; item?: ShapeItem } | undefined {
+		const target = open.target;
+		if (target.kind === "narration") return undefined;
+		const entry = this.entryAt(target.cardId, target.entryIndex);
+		if (target.kind === "member") {
+			if (!entry || entry.kind !== "group") return undefined;
+			const item = entry.group.items[target.itemIndex];
+			if (!item || item.label !== target.label) return undefined;
+			// A running call's partial output is in memory; the full-output file is
+			// read once, after it finishes.
+			const full = item.running ? item.fullOutput : this.deps.readFullOutput(item);
+			return { raw: itemModalContent(item, full), finished: !item.running, item };
+		}
+		if (!entry || entry.kind !== "thought") return undefined;
+		const thought: ShapeThought = entry.thought;
+		const raw = thoughtModalContent(thought, thought.fullText);
+		// Thinking text only grows, so a different prefix means the index now points
+		// at another span.
+		if (!raw.copyText.startsWith(open.raw.copyText)) return undefined;
+		return { raw, finished: !thought.live };
 	}
 
 	/** Styled rows are best-effort decoration: a failing enricher must never cost
@@ -181,8 +261,9 @@ export class ModalController {
 		if (!entry || entry.kind !== "group") return;
 		const item = entry.group.items[itemIndex];
 		if (!item) return;
-		const full = this.deps.readFullOutput(item);
-		this.showModal(this.enrich(itemModalContent(item, full), item));
+		const full = item.running ? item.fullOutput : this.deps.readFullOutput(item);
+		const target: ModalTarget = { kind: "member", cardId, entryIndex, itemIndex, label: item.label };
+		this.showModal(target, itemModalContent(item, full), !item.running, item);
 	}
 
 	openThoughtModal(cardId: string, entryIndex: number): void {
@@ -191,13 +272,15 @@ export class ModalController {
 		// Pass the raw untruncated span text so the modal shows the full reasoning,
 		// not the compact previewLines-capped `tail` (that stays the card row's
 		// glance view). Mirrors the tool-row fullText pattern.
-		this.showModal(this.enrich(thoughtModalContent(entry.thought, entry.thought.fullText)));
+		const thought = entry.thought;
+		const raw = thoughtModalContent(thought, thought.fullText);
+		this.showModal({ kind: "thought", cardId, entryIndex }, raw, !thought.live);
 	}
 
 	openNarrationModal(cardId: string, entryIndex: number): void {
 		const entry = this.entryAt(cardId, entryIndex);
 		if (!entry || entry.kind !== "narration") return;
-		this.showModal(this.enrich(narrationModalContent(entry.narration)));
+		this.showModal({ kind: "narration" }, narrationModalContent(entry.narration), true);
 	}
 
 	/** Force-close and clear the copy-status timer (called at session_shutdown). */

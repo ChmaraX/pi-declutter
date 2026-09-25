@@ -137,7 +137,9 @@ export function thoughtModalContent(thought: ShapeThought, fullText?: string): M
 	const raw = fullText !== undefined && fullText.length > 0 ? fullText : thought.tail.join("\n");
 	const body = raw.length > 0 ? raw.split("\n") : [];
 	return {
-		title: `Thought ${formatDuration(thought.ms)}${summary}`,
+		// A still-streaming span reads like its card row, so the modal makes clear
+		// the text is growing.
+		title: thought.live ? `Thinking… · ${formatDuration(thought.ms)}` : `Thought ${formatDuration(thought.ms)}${summary}`,
 		caption: "Thinking",
 		body,
 		markdown: raw,
@@ -247,6 +249,14 @@ export function clampScrollTop(desiredTop: number, total: number, viewport: numb
 	if (desiredTop < 0) return 0;
 	if (desiredTop > maxTop) return maxTop;
 	return desiredTop;
+}
+
+/** Scroll position after the body is replaced by a longer or shorter one.
+ * A reader parked at the bottom follows the new tail; anyone who scrolled up
+ * keeps their place. */
+export function followScrollTop(top: number, oldTotal: number, newTotal: number, viewport: number): number {
+	const wasAtBottom = top >= Math.max(0, oldTotal - viewport);
+	return clampScrollTop(wasAtBottom ? newTotal : top, newTotal, viewport);
 }
 
 /** The slice of body lines visible for a given scroll window. */

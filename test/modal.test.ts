@@ -202,6 +202,22 @@ test("wrapBody flattens multi-paragraph body, keeping blank separators", () => {
 	assert.deepEqual(rows, ["the quick", "brown fox", "", "jumps over", "the lazy", "dog"]);
 });
 
+test("wrapBody routes every line through an injected wrapper (pi-tui's ANSI-aware one at render time)", () => {
+	// The view injects wrapTextWithAnsi so escape sequences survive a break; the
+	// stub stands in for it here, keeping this module pi-import-free.
+	const calls: Array<[string, number]> = [];
+	const wrap = (line: string, width: number): string[] => {
+		calls.push([line, width]);
+		return line === "" ? [""] : [`<${line}>`];
+	};
+	assert.deepEqual(wrapBody(["one", "", "two"], 9, wrap), ["<one>", "", "<two>"]);
+	assert.deepEqual(calls, [
+		["one", 9],
+		["", 9],
+		["two", 9],
+	]);
+});
+
 test("wrapped body drives the scroll math on the larger row count", () => {
 	// Two source lines wrap to five rows; a 3-row viewport then scrolls them.
 	const body = ["aaa bbb ccc ddd", "eee fff"];

@@ -9,7 +9,7 @@
 // done/copy callbacks are all injected by the ModalController that owns it.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Focusable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { type Focusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
 import { clampScrollTop, handleToolsExpandInput, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
 import { styleTone } from "./styling.ts";
@@ -23,21 +23,6 @@ const MODAL_BODY_MAX_ROWS = 24;
  * caption separator, footer separator, footer, bottom border.
  * Subtracted from the overlay's height when sizing the body viewport. */
 const MODAL_CHROME_ROWS = 7;
-
-/** End-truncate to a visible-width budget, appending … on overflow. */
-export function truncateVisible(text: string, max: number): string {
-	if (visibleWidth(text) <= max) return text;
-	const chars = [...text];
-	let out = "";
-	let w = 0;
-	for (const ch of chars) {
-		const cw = visibleWidth(ch);
-		if (w + cw > Math.max(0, max - 1)) break;
-		out += ch;
-		w += cw;
-	}
-	return `${out}…`;
-}
 
 /** Colour a modal badge through the theme (success/error/dim tone). */
 export function styleBadge(theme: Theme, badge: { text: string; tone: Tone }): string {
@@ -111,10 +96,13 @@ export class OutputModal implements Focusable {
 		this.termWidth = width;
 	}
 
-	/** The body wrapped to `innerContentWidth`, memoized per width. */
+	/** The body wrapped to `innerContentWidth`, memoized per width. Wrapping goes
+	 * through pi-tui so a styled row's ANSI/OSC 8 state is reopened on every
+	 * continuation row instead of being cut mid-sequence. */
 	private bodyRows(innerContentWidth: number): string[] {
 		if (this.wrappedForWidth !== innerContentWidth) {
-			this.wrappedBody = wrapBody(this.content.body, innerContentWidth, visibleWidth);
+			const source = this.content.bodyStyled ?? this.content.body;
+			this.wrappedBody = wrapBody(source, innerContentWidth, wrapTextWithAnsi);
 			this.wrappedForWidth = innerContentWidth;
 		}
 		return this.wrappedBody;
@@ -161,7 +149,7 @@ export class OutputModal implements Focusable {
 		const badgeText = badge ? badge.text : "";
 		const badgeVis = badge ? visibleWidth(badgeText) + 1 : 0;
 		const titleRoom = Math.max(0, innerW - 1 - badgeVis);
-		const title = ` ${truncateVisible(this.content.title, titleRoom)}`;
+		const title = ` ${truncateToWidth(this.content.title, titleRoom, "…")}`;
 		const badgeStyled = badge ? `${styleBadge(th, badge)} ` : "";
 		const titlePad = Math.max(0, innerW - visibleWidth(title) - visibleWidth(badgeText) - (badge ? 1 : 0));
 		lines.push(border("╭") + border("─".repeat(innerW)) + border("╮"));
@@ -187,10 +175,13 @@ export class OutputModal implements Focusable {
 		this.lastViewport = viewport;
 		this.top = clampScrollTop(this.top, wrapped.length, viewport);
 		const slice = visibleSlice(wrapped, this.top, viewport);
+		// Body is CONTENT the user opened to read — normal text colour, same
+		// reasoning as the narration rows. Chrome stays dim. Styled rows carry their
+		// own colours; re-colouring them would leak the theme's default foreground
+		// past their first reset.
+		const styled = this.content.bodyStyled !== undefined;
 		for (const bodyLine of slice) {
-			// Body is CONTENT the user opened to read — normal text colour, same
-			// reasoning as the narration rows. Chrome stays dim.
-			lines.push(rowLine(` ${th.fg("text", bodyLine)}`));
+			lines.push(rowLine(` ${styled ? bodyLine : th.fg("text", bodyLine)}`));
 		}
 		// Pad the body area to a stable height so the box doesn't jump while scrolling
 		// a short tail (only when there IS content to stabilize around).

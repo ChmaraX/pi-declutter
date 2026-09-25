@@ -22,6 +22,10 @@ export interface ModalContent {
 	caption: string;
 	/** Body lines as raw text (no ANSI); rendered and copied verbatim. */
 	body: string[];
+	/** Pre-styled display rows (ANSI) replacing `body` on screen — a rendered
+	 * diff, highlighted code or markdown. Same logical order as `body`; absent
+	 * when the body has no richer form. Never used for `copyText`. */
+	bodyStyled?: string[];
 	/** The exact text `c` copies — the untruncated raw body. */
 	copyText: string;
 	/** True when the body was loaded from a truncated capture's full-output file. */
@@ -112,6 +116,11 @@ export type WidthFn = (s: string) => number;
 
 const codePointWidth: WidthFn = (s) => [...s].length;
 
+/** Wraps one source line to a display width, returning at least one row.
+ * Defaults to the pure `wrapLine`; modal-view.ts injects pi-tui's
+ * `wrapTextWithAnsi` so ANSI/OSC 8 sequences survive a break. */
+export type WrapFn = (line: string, width: number) => string[];
+
 /**
  * Word-wrap one source line to `width` display columns. Breaks on whitespace
  * where possible; a single unbreakable run longer than `width` is hard-broken
@@ -180,9 +189,9 @@ export function wrapLine(line: string, width: number, measure: WidthFn = codePoi
 /** Wrap every source body line to `width`, flattening into the display-row
  * array the scroll window operates on. Memoize per width at the call site;
  * this is a pure transform. */
-export function wrapBody(body: readonly string[], width: number, measure: WidthFn = codePointWidth): string[] {
+export function wrapBody(body: readonly string[], width: number, wrap: WrapFn = wrapLine): string[] {
 	const out: string[] = [];
-	for (const line of body) out.push(...wrapLine(line, width, measure));
+	for (const line of body) out.push(...wrap(line, width));
 	return out;
 }
 

@@ -1,10 +1,10 @@
-// Provider-stream normalization (owner architecture request): some providers
-// route tool activity through the THINKING channel instead of real tool events.
-// pi-cursor-sdk is the known case — Cursor's cloud agent executes tools
-// remotely and streams each one back as a thinking block shaped like an
-// operation dump ("$ grep …", "read /path", "Cursor shell: <cmd>" + output),
-// interleaved with genuine reasoning prose. Without classification those dumps
-// coalesce into the Thought entry and the card shows no tool members at all.
+// Provider-stream normalization: some providers route tool activity through
+// the THINKING channel instead of real tool events. pi-cursor-sdk is the known
+// case — Cursor's cloud agent executes tools remotely and streams each one
+// back as a thinking block shaped like an operation dump ("$ grep …",
+// "read /path", "Cursor shell: <cmd>" + output), interleaved with genuine
+// reasoning prose. Without classification those dumps coalesce into the
+// Thought entry and the card shows no tool members at all.
 //
 // This module is the single choke point for that normalization: one pure
 // function that looks at a finished thinking span's text and says "reasoning"

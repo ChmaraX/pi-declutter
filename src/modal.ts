@@ -1,11 +1,10 @@
 /**
- * Pure modal-content model + scroll windowing for the floating output overlay
- * (ticket 35). The inline bordered output box (ticket 17) was hard to read and
- * copy; clicking a member/thought row now opens a focused overlay instead. This
- * module owns everything renderable-and-testable: the title bar (label +
- * duration + Success/Exit badge, or "Thought Ns · summary"), the raw body text
- * used for both display and clipboard copy, and the scroll window math. The
- * overlay Component in index.ts is a thin shell around this.
+ * Pure modal-content model + scroll windowing for the floating output overlay.
+ * Clicking a member/thought/narration row opens a focused overlay: this module
+ * owns everything renderable-and-testable — the title bar (label + duration +
+ * Success/Exit badge, or "Thought Ns · summary"), the raw body text used for
+ * both display and clipboard copy, and the scroll window math. The overlay
+ * Component in index.ts is a thin shell around this.
  *
  * Kept pi-import-free so it unit-tests headlessly.
  */
@@ -34,7 +33,7 @@ export interface ModalContent {
  * cap); otherwise the shaped preview tail is used. A command tool leads its body
  * with the `$ <command>` line so the modal is self-describing; every other tool
  * leads with an Input section (pretty-printed args) when available, so
- * MCP/extension tool modals are never empty (owner issue 2). */
+ * MCP/extension tool modals are never empty. */
 export function itemModalContent(item: ShapeItem, fullText?: string): ModalContent {
 	const badge = itemBadge(item);
 	const isCommand = item.command !== undefined;
@@ -42,9 +41,9 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 	const caption = isCommand ? "Shell" : item.input !== undefined ? "Call" : "Output";
 	const raw = fullText !== undefined && fullText.length > 0 ? fullText : item.preview.join("\n");
 	const splitLines = raw.length > 0 ? raw.split("\n") : [];
-	// Ticket-19 cleanup for the modal body (review P2 #2): drop trailing blanks
-	// and the duplicated "Command exited with code N" line the Exit-code badge
-	// already carries. boxTail is pure and shared with the former inline box.
+	// Drop trailing blanks and the duplicated "Command exited with code N" line
+	// the Exit-code badge already carries. boxTail is pure and shared with the
+	// member row's collapsed preview.
 	const rawLines = boxTail(splitLines, item.exitCode);
 	const body: string[] = [];
 	if (isCommand) body.push(`$ ${item.command}`);
@@ -68,8 +67,8 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 	};
 }
 
-/** Compose the modal content for a narration row (ticket 41): the full text of
- * an intermediate assistant paragraph that got folded into the card. */
+/** Compose the modal content for a narration row: the full text of an
+ * intermediate assistant paragraph that got folded into the card. */
 export function narrationModalContent(narration: ShapeNarration): ModalContent {
 	const body = narration.text.length > 0 ? narration.text.split("\n") : [];
 	return {
@@ -103,10 +102,10 @@ export type WidthFn = (s: string) => number;
 const codePointWidth: WidthFn = (s) => [...s].length;
 
 /**
- * Word-wrap one source line to `width` display columns (ticket 39). Breaks on
- * whitespace where possible; a single unbreakable run longer than `width` is
- * hard-broken into `width`-sized chunks. An empty line stays one empty row (so
- * blank separators in multi-paragraph bodies are preserved). Pure: width is
+ * Word-wrap one source line to `width` display columns. Breaks on whitespace
+ * where possible; a single unbreakable run longer than `width` is hard-broken
+ * into `width`-sized chunks. An empty line stays one empty row (so blank
+ * separators in multi-paragraph bodies are preserved). Pure: width is
  * measured via the injected `measure` (default code-point count).
  *
  * Returns at least one row for every input line, so the row count is stable and
@@ -167,8 +166,8 @@ export function wrapLine(line: string, width: number, measure: WidthFn = codePoi
 	return rows.length > 0 ? rows : [""];
 }
 
-/** Wrap every source body line to `width`, flattening into the display-row array
- * the scroll window operates on (ticket 39). Memoize per width at the call site;
+/** Wrap every source body line to `width`, flattening into the display-row
+ * array the scroll window operates on. Memoize per width at the call site;
  * this is a pure transform. */
 export function wrapBody(body: readonly string[], width: number, measure: WidthFn = codePointWidth): string[] {
 	const out: string[] = [];

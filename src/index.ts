@@ -443,14 +443,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// on thinking_start, flushed into the group on thinking_end.
 	let thinkingBuf = "";
 	// Monotonic id source for synthetic calls reconstructed from thinking-channel
-	// tool dumps (span-classify.ts) \u2014 they have no provider toolCallId.
+	// tool dumps (span-classify.ts) — they have no provider toolCallId.
 	let syntheticCallSeq = 0;
 
 	// Tool-call ids whose native rows the card absorbs (session-lived; never
-	// cleared \u2014 a hidden row must stay hidden for the transcript's life). Ids are
+	// cleared — a hidden row must stay hidden for the transcript's life). Ids are
 	// added at tool_execution_start so the native row never paints a frame; the
 	// ToolExecutionComponent render patch (patches.ts) is the ONLY hiding
-	// mechanism \u2014 this extension registers NO tools. Deliberate (owner decision):
+	// mechanism — this extension registers NO tools. Deliberate (owner decision):
 	// re-registering built-ins made pi-cursor-sdk skip its native tool replay
 	// ("name already owned by another extension") and fall back to thinking-text
 	// transcripts, and it hard-conflicted with other display extensions.
@@ -507,7 +507,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ONCE per TUI session, torn down at shutdown (ticket 38: owned by PatchController).
 	const patchController = new PatchController(runtime, hasLiveUI);
 	// Narration lifecycle (ticket 41, review follow-up: owning module): pending
-	// capture at text_end \u2192 confirm-hide \u2192 promote/restore at settle \u2192 rehide on
+	// capture at text_end → confirm-hide → promote/restore at settle → rehide on
 	// transcript rebuild, all owned by NarrationController (src/narration-
 	// controller.ts). Deps-injected (same pattern as ModalController) so the
 	// controller never imports pi-tui/patches runtime shapes directly.
@@ -568,7 +568,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		cardModel = undefined;
 		cardAppended = false;
 		// A pending narration from the PREVIOUS response is moot for a fresh one
-		// (ticket 41) \u2014 drop it without hiding (its native rendering, if it was
+		// (ticket 41) — drop it without hiding (its native rendering, if it was
 		// genuinely the previous response's final answer, must stay untouched).
 		narrationController.reset();
 	}
@@ -622,20 +622,20 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (added) runtime.tui?.requestRender();
 	}
 
-	// \u2500\u2500 Universal tool-row absorption \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	// ── Universal tool-row absorption ────────────────────
 	// EVERY tool's native row (built-in, MCP, extension) is hidden by ONE guarded
 	// prototype patch on pi's ToolExecutionComponent, driven by the shared
 	// `absorbed` set; ids are added at tool_execution_start so rows never paint a
 	// frame. The old ticket-08 re-registration mechanism is gone (owner decision:
 	// it blocked pi-cursor-sdk's native tool replay and hard-conflicted with
 	// other display extensions). Fail-open: while the patch is not installed,
-	// rows render natively (pi default) \u2014 noisier but fully functional.
+	// rows render natively (pi default) — noisier but fully functional.
 	let toolRowPatchInstalled = false;
 	/** FALLBACK acquisition only (called from the session_start sweep). The
 	 * PRIMARY mechanism is the mount hook below: installToolMountHook patches +
 	 * absorbs at addChild time, before a component's first render. This fallback
 	 * exists solely for a rebuilt tree that already contains tool components
-	 * when the sweep runs (post-/reload) \u2014 the mount hook never saw those. */
+	 * when the sweep runs (post-/reload) — the mount hook never saw those. */
 	function tryAcquireToolRowPatch(): void {
 		if (toolRowPatchInstalled || !runtime.tui) return;
 		const result = acquireToolRowHidePatch(runtime.tui, (id) => absorbed.has(id));
@@ -801,7 +801,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	}
 
 	function toggleNode(id: string, nodeId: string): void {
-		// Any node interaction may open a modal \u2014 make sure click-away close is
+		// Any node interaction may open a modal — make sure click-away close is
 		// wired first (idempotent, cheap after the first call).
 		installClickAwayClose();
 		const cv = getCardView(view, id);
@@ -923,10 +923,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		const { entries: finalEntries, finalAnswer, promoted } = grouper.finalize();
 		// Whatever the pending narration block pointed at is now resolved either way
 		// (folded into finalEntries as a narration entry, or popped out as the final
-		// answer) \u2014 promotion (owner bug: Cursor trails thinking/tool dumps AFTER the
+		// answer) — promotion (owner bug: Cursor trails thinking/tool dumps AFTER the
 		// real answer, and a turn can end on tool calls) restores the matching hidden
 		// block's native rendering so the response is never visibly answerless
-		// (NarrationController.settle, ticket 41 \u2014 review follow-up: owning module).
+		// (NarrationController.settle, ticket 41 — review follow-up: owning module).
 		narrationController.settle(finalAnswer, promoted);
 
 		if (finalEntries.length === 0) {
@@ -1229,12 +1229,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	on("session_compact", (_event: SessionCompactEvent, ctx: ExtensionContext) => {
 		// Re-hide already-folded narration (ticket 41): a compaction rebuild recreates
 		// every AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
-		// (hideMessageTextBlock never touches what's persisted \u2014 the byte-identical-
+		// (hideMessageTextBlock never touches what's persisted — the byte-identical-
 		// context constraint), so any paragraph already folded into a card would
 		// otherwise reappear natively the instant the tree is rebuilt. Sweep EVERY
 		// tracked card (past + current) plus a still-unconfirmed pending block, and
 		// re-apply the hide to the freshly-rebuilt tree by text match. Independent of
-		// the card-survival logic below \u2014 must run even if that decides there's
+		// the card-survival logic below — must run even if that decides there's
 		// nothing to re-append.
 		const texts = new Set<string>();
 		for (const model of view.models.values()) for (const t of narrationTexts(model.entries ?? [])) texts.add(t);
@@ -1317,8 +1317,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			case "thinking_end": {
 				const ms = thinkingStartMs ? Date.now() - thinkingStartMs : 0;
 				// Provider-stream normalization (span-classify.ts, owner issue): some
-				// providers (Cursor) stream TOOL ACTIVITY through the thinking channel \u2014
-				// "$ grep \u2026", "read /path", "Cursor shell: <cmd>" dumps with output, no
+				// providers (Cursor) stream TOOL ACTIVITY through the thinking channel —
+				// "$ grep …", "read /path", "Cursor shell: <cmd>" dumps with output, no
 				// real tool events at all. A span classified as a tool step becomes a
 				// synthetic settled call (a proper card member with the dump as its modal
 				// output) instead of polluting/overwriting the Thought entry.
@@ -1349,7 +1349,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			}
 			case "text_start":
 				// A NEW text block starting is ALSO proof any pending one wasn't final
-				// (ticket 41) \u2014 two text blocks can stream back to back with nothing
+				// (ticket 41) — two text blocks can stream back to back with nothing
 				// else between them.
 				narrationController.confirmNonFinal();
 				// A text block opened, but empty/whitespace-only blocks must NOT break
@@ -1365,13 +1365,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// Break on a non-empty block even if no delta carried content (some
 				// providers deliver the whole text in text_end).
 				grouper.textEnd(ame.content);
-				// Capture the instance NOW (ticket 41) \u2014 unambiguous at this exact
+				// Capture the instance NOW (ticket 41) — unambiguous at this exact
 				// moment, since no later message has started yet. Held until either
 				// confirmed non-final (hidden, folded into the card) or the response
-				// settles with nothing after it (the true final answer \u2014 left alone).
+				// settles with nothing after it (the true final answer — left alone).
 				narrationController.captureTextEnd(runtime.tui, ame.contentIndex, ame.content);
 				// Reflect the new narration entry in the card NOW (it's already in the
-				// grouper's entries \u2014 snapshot() never withholds it), instead of waiting for
+				// grouper's entries — snapshot() never withholds it), instead of waiting for
 				// the next unrelated event to happen to call refreshLive.
 				refreshLive();
 				break;
@@ -1382,7 +1382,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	on("tool_execution_start", (event: ToolExecutionStartEvent, ctx: ExtensionContext) => {
 		// Universal tool-row absorption: hide this call's native row from its FIRST
-		// frame (the card is the only view of tool activity \u2014 Codex style). The id
+		// frame (the card is the only view of tool activity — Codex style). The id
 		// goes into the set BEFORE the component's first render; the render patch
 		// then returns zero rows for it, so nothing paints and nothing collapses
 		// later (no differential-repaint/scrollback concerns at all).
@@ -1417,7 +1417,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			call.endMs = Date.now();
 			call.isError = event.isError;
 			// Capture the FULL output for EVERY tool (owner issue: MCP/extension tool
-			// modals opened empty \u2014 capture was gated to command/search tools). Bounded
+			// modals opened empty — capture was gated to command/search tools). Bounded
 			// at MAX_MODAL_CAPTURE; truncated command output additionally sets
 			// fullOutputPath (tool_result below), read lazily on open and preferred.
 			const text = extractResultText(event.result);

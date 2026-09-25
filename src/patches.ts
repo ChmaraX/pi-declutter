@@ -160,7 +160,7 @@ export interface PatchTargetInstance {
 	/** The raw message the component last rendered (used for retroactive removal). */
 	lastMessage?: { content?: unknown };
 	/** Re-render from `lastMessage` (or an explicitly passed message) through
-	 * whatever updateContent is CURRENTLY bound \u2014 original or patched \u2014 so a
+	 * whatever updateContent is CURRENTLY bound — original or patched — so a
 	 * narration hide (ticket 41, hideMessageTextBlock) composes with the spacer
 	 * patch instead of bypassing it. */
 	updateContent?: (message: { content?: unknown }, ...rest: unknown[]) => unknown;
@@ -331,7 +331,7 @@ export function isAssistantMessageComponentLike(value: unknown): value is PatchT
  * `getMountedRoots?.()`, cycle-guarded by a seen-set, never throwing into pi
  * (mid-switch renderers may briefly have no mounted roots). `visit` runs for
  * every non-array object node; returning true STOPS the walk (early exit for
- * single-instance searches). One walker instead of per-caller copies \u2014 the
+ * single-instance searches). One walker instead of per-caller copies — the
  * copies had already drifted subtly (early-stop vs full walk), which is exactly
  * the divergence this prevents.
  */
@@ -380,7 +380,7 @@ export function findAssistantMessageComponents(root: unknown): PatchTargetInstan
 const hiddenBlockIndices = new WeakMap<object, Set<number>>();
 
 /** Shallow-copy `message` with every registered hidden text block blanked.
- * Never mutates the passed message or its content array \u2014 it may be pi's own
+ * Never mutates the passed message or its content array — it may be pi's own
  * stored object (the byte-identical-context constraint, tickets 22/26). */
 function blankHiddenBlocks(instance: object, message: { content?: unknown }): { content?: unknown } {
 	const set = hiddenBlockIndices.get(instance);
@@ -402,14 +402,14 @@ function blankHiddenBlocks(instance: object, message: { content?: unknown }): { 
  * Retroactively hide ONE text content block of a live AssistantMessageComponent
  * instance (ticket 41): rebuild the message through whatever updateContent is
  * CURRENTLY bound (original or spacer-patched) with `content[contentIndex]`'s
- * text blanked, so it renders zero rows exactly like a suppressed thinking run \u2014
+ * text blanked, so it renders zero rows exactly like a suppressed thinking run —
  * the ALREADY-INSTALLED spacer patch (if active) then strips its bordering
  * spacer for free, since its detection is structural (visible-row count), not
  * keyed to message type. Used when a text block that streamed natively turns out
  * to be narration (something followed it), not the final answer.
  *
  * The hide is PERSISTENT for the instance's lifetime (owner bug report: a
- * one-shot blank was resurrected the moment the SAME message kept streaming \u2014
+ * one-shot blank was resurrected the moment the SAME message kept streaming —
  * thinking or a second text block after the narration re-renders the full
  * original content). The index is registered in hiddenBlockIndices and a
  * per-instance updateContent wrapper (own property, shadows the prototype
@@ -418,11 +418,11 @@ function blankHiddenBlocks(instance: object, message: { content?: unknown }): { 
  * the spacer patch regardless of installation order and never recurses (the
  * prototype call bypasses the own property).
  *
- * NEVER mutates `instance.lastMessage` or its `content` array in place \u2014 only a
- * shallow copy is passed to updateContent \u2014 so this is render-only and cannot
+ * NEVER mutates `instance.lastMessage` or its `content` array in place — only a
+ * shallow copy is passed to updateContent — so this is render-only and cannot
  * touch what pi persists or resends to the provider (the byte-identical-context
  * constraint, tickets 22/26). Returns false (no-op) when the instance, its
- * message, or the indexed block don't look right \u2014 fails open rather than
+ * message, or the indexed block don't look right — fails open rather than
  * risking a wrong removal.
  */
 export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex: number): boolean {
@@ -455,7 +455,7 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 				return fn.call(this, blankHiddenBlocks(this, message), ...rest);
 			};
 		} catch {
-			// Fail open: wrapper install failed \u2014 the immediate blank below still runs
+			// Fail open: wrapper install failed — the immediate blank below still runs
 			// (one-shot behavior), a later native update may resurrect the text.
 		}
 	}
@@ -474,7 +474,7 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 /**
  * Undo a hideMessageTextBlock (ticket 41 promotion): de-register the index so
  * the per-instance wrapper stops blanking it, then re-render with `text`
- * restored. The original text must be passed back in \u2014 pi's updateContent
+ * restored. The original text must be passed back in — pi's updateContent
  * stores the blanked copy as lastMessage, so the component itself no longer
  * has it (we do: the narration entry kept the full text). Render-only and
  * fail-open, same contract as the hide.
@@ -499,13 +499,13 @@ export function restoreMessageTextBlock(instance: PatchTargetInstance, contentIn
 /**
  * Re-apply hideMessageTextBlock across an ENTIRE live tree, for every text
  * block whose trimmed content matches one of `texts` (ticket 41). Needed after
- * ANY full transcript rebuild \u2014 compaction, /resume, /fork \u2014 rebuilds every
+ * ANY full transcript rebuild — compaction, /resume, /fork — rebuilds every
  * AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
  * (hideMessageTextBlock is render-only and never touches what's persisted, by
  * the byte-identical-context constraint), so a paragraph already folded into an
  * activity card would otherwise reappear natively the moment the tree is
  * rebuilt. Matches by TRIMMED TEXT, not object/instance identity, since every
- * identity is gone after a rebuild \u2014 the one accepted imprecision: a genuinely
+ * identity is gone after a rebuild — the one accepted imprecision: a genuinely
  * unrelated block with byte-identical text to a past narration entry would also
  * be hidden. `texts` should be every narration entry's full text still known
  * (every live/persisted card, plus any not-yet-committed pending block) so
@@ -790,7 +790,7 @@ export function isToolExecutionComponentLike(value: unknown): boolean {
 const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
 
 /** Prototype slot holding the CURRENT isAbsorbed callback. The patched render
- * reads it at call time, and install() always rewrites it \u2014 so a /reload's
+ * reads it at call time, and install() always rewrites it — so a /reload's
  * fresh runtime (new absorbed set, new closure) REBINDS the existing patch
  * instead of leaving it pointing at the dead runtime's set (which would let
  * every post-reload tool row render natively again). */
@@ -811,7 +811,7 @@ export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: 
 		[TOOL_ROW_PATCH_CALLBACK]?: unknown;
 	};
 	try {
-		// ALWAYS (re)bind the callback \u2014 this is what keeps the patch alive across
+		// ALWAYS (re)bind the callback — this is what keeps the patch alive across
 		// /reload (the patched render below reads it per call, never a closure).
 		Object.defineProperty(p, TOOL_ROW_PATCH_CALLBACK, {
 			value: isAbsorbed,
@@ -842,7 +842,7 @@ export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: 
 /**
  * Collect every live ToolExecutionComponent's toolCallId under `root`.
  * Used after a rebuild (/reload) so the fresh runtime can re-absorb
- * HISTORICAL tool rows \u2014 its absorbed set starts empty, and rebinding the
+ * HISTORICAL tool rows — its absorbed set starts empty, and rebinding the
  * render patch to it would otherwise let every pre-reload row render natively
  * again. The card is the only intended view of tool activity, so absorbing
  * everything found is the invariant, not a heuristic.

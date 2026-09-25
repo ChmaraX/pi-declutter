@@ -1,8 +1,8 @@
 /**
- * Pure flow state machine for the activity feed (tickets 10 + 21).
+ * Pure flow state machine for the activity feed.
  *
  * The card represents the agent's ACTUAL flow as an ordered TOP-LEVEL sequence
- * of entries — Thought entries and Group entries — in event order (ticket 21):
+ * of entries — Thought entries and Group entries — in event order:
  *
  *     · Thought 4s · planning approach          (thought entry)
  *     • Ran commands · 2 commands               (group entry: consecutive tools)
@@ -10,21 +10,19 @@
  *     $ Ran make test (4.0s)                     (group entry: singleton tool)
  *
  * A "group" is a maximal run of consecutive tool calls uninterrupted by either
- * MEANINGFUL thinking or visible assistant text — both now close the open group.
+ * MEANINGFUL thinking or visible assistant text — both close the open group.
  *
  * Boundary rules:
- *   - Visible assistant text closes the open group (ticket 10, overturning
- *     ticket 07's `text_start` break): on the first non-whitespace `text_delta`,
- *     or at `text_end` if the whole block turned out to be non-empty. Empty /
- *     whitespace-only text blocks do NOT break. Turn boundaries never break
- *     (a run of tool-only turns stays one group — Codex U01/U04 fat groups).
+ *   - Visible assistant text closes the open group: on the first non-whitespace
+ *     `text_delta`, or at `text_end` if the whole block turned out to be
+ *     non-empty. Empty / whitespace-only text blocks do NOT break. Turn
+ *     boundaries never break (a run of tool-only turns stays one group).
  *   - MEANINGFUL thinking closes the open group and becomes its own top-level
- *     Thought entry between the groups it separated (ticket 21). Meaningful =
- *     a run of CONSECUTIVE thinking spans whose durations total >= MIN_THOUGHT_MS
+ *     Thought entry between the groups it separated. Meaningful = a run of
+ *     CONSECUTIVE thinking spans whose durations total >= MIN_THOUGHT_MS
  *     (coalesced into one entry). Sub-threshold thinking is ignored entirely: it
- *     does not break groups and does not render (protects against the 1–4 ms
- *     bursty spans from spike finding 3, so tool bursts without real thinking
- *     still form one fat group).
+ *     does not break groups and does not render (protects against bursty 1–4 ms
+ *     spans, so tool bursts without real thinking still form one fat group).
  *
  * A thinking run is "consecutive" only until a tool call or visible text
  * interrupts it; those events resolve the pending run (emit it if meaningful,
@@ -35,8 +33,8 @@
  */
 
 /** Meaningful-thinking threshold: a coalesced thinking run shorter than this is
- * ignored (does not break a group, does not render) — ticket 06 finding 3. This
- * is the single source of truth for the 1s threshold; card-shape re-exports it. */
+ * ignored (does not break a group, does not render). This is the single source
+ * of truth for the 1s threshold; card-shape re-exports it. */
 export const MIN_THOUGHT_MS = 1000;
 
 /** True when `text` contains at least one non-whitespace character. */
@@ -45,15 +43,15 @@ export function hasNonWhitespace(text: string): boolean {
 }
 
 /** One captured thinking span: self-timed duration plus the streamed text
- * (ticket 20 — the text drives the thought-entry summary + expandable box). */
+ * (drives the thought-entry summary + expandable box). */
 export interface ThoughtSpan {
 	ms: number;
 	text: string;
 }
 
 /**
- * The in-progress thinking span passed to snapshot() (ticket 23): the elapsed ms
- * of the currently-streaming span and its current streamed text. `text` is a live
+ * The in-progress thinking span passed to snapshot(): the elapsed ms of the
+ * currently-streaming span and its current streamed text. `text` is a live
  * reference — snapshot copies only a bounded tail downstream (buildCardEntries →
  * coalesceThoughts), so the full buffer is never retained here.
  */
@@ -63,42 +61,42 @@ export interface LiveThinking {
 }
 
 /**
- * The live tick condition (ticket 23): the timer runs while tool calls are
- * executing OR a thinking span is active. Tools drive their row spinners and
- * durations; an active thinking span drives the live "Thinking… · Xs" entry and
- * its crossing of MIN_THOUGHT_MS. The timer tears down only when neither is true.
- * Pure so index.ts and tests share one rule.
+ * The live tick condition: the timer runs while tool calls are executing OR a
+ * thinking span is active. Tools drive their row spinners and durations; an
+ * active thinking span drives the live "Thinking… · Xs" entry and its crossing
+ * of MIN_THOUGHT_MS. The timer tears down only when neither is true. Pure so
+ * index.ts and tests share one rule.
  */
 export function shouldTick(runningTools: number, thinkingActive: boolean): boolean {
 	return runningTools > 0 || thinkingActive;
 }
 
 /**
- * One top-level entry in the card's ordered flow (ticket 21): a group of
- * consecutive tool calls, a coalesced run of meaningful thinking spans, or a
- * narration text block (ticket 41 \u2014 an intermediate assistant paragraph that
- * turned out NOT to be the final answer, folded into the card in its
- * chronological spot instead of floating in the transcript).
+ * One top-level entry in the card's ordered flow: a group of consecutive tool
+ * calls, a coalesced run of meaningful thinking spans, or a narration text
+ * block (an intermediate assistant paragraph that turned out NOT to be the
+ * final answer, folded into the card in its chronological spot instead of
+ * floating in the transcript).
  */
 export type Entry<C> =
 	| { kind: "group"; calls: C[] }
 	| { kind: "thought"; spans: ThoughtSpan[] }
 	| { kind: "narration"; text: string };
 
-/** Result of finalize() (ticket 41): the settled entry sequence, plus the FINAL
- * answer text when the response's last thing was a text block with nothing after
- * it (popped out of `entries` \u2014 it renders as the normal transcript response,
- * not a card row). Undefined when the response ended on a group/thought, or had
- * no narration at all. */
+/** Result of finalize(): the settled entry sequence, plus the FINAL answer
+ * text when the response's last thing was a text block with nothing after it
+ * (popped out of `entries` — it renders as the normal transcript response,
+ * not a card row). Undefined when the response ended on a group/thought, or
+ * had no narration at all. */
 export interface FinalizeResult<C> {
 	entries: Entry<C>[];
 	finalAnswer?: string;
 	/** True when `finalAnswer` was PROMOTED: the response ended on a
-	 * group/thought (no trailing text), so the LAST narration \u2014 already folded
-	 * and natively hidden \u2014 was pulled back out as the answer. The caller must
-	 * restore its native text block (a response must never end answerless just
-	 * because the provider trailed off with thinking/tools \u2014 owner bug: Cursor
-	 * streams a final thinking dump AFTER the real answer). */
+	 * group/thought (no trailing text), so the LAST narration — already folded
+	 * and natively hidden — was pulled back out as the answer. The caller must
+	 * restore its native text block, since a response must never end
+	 * answerless just because the provider trailed off with thinking/tools
+	 * after its real answer (a known pattern with some providers). */
 	promoted?: boolean;
 }
 
@@ -147,7 +145,7 @@ export class Grouper<C> {
 	}
 
 	/** A text block ended: break if it had non-empty content and hasn't broken yet
-	 * (unchanged), then record it as a narration entry (ticket 41) \u2014 folded into
+	 * (unchanged), then record it as a narration entry (ticket 41) — folded into
 	 * the card in its chronological spot unless finalize() later finds it trailing
 	 * (the true final answer, popped back out). Whitespace-only blocks record
 	 * nothing, matching the existing no-break rule. */
@@ -159,7 +157,7 @@ export class Grouper<C> {
 
 	/** Close the open flow (resolve trailing thinking, close the open group) and
 	 * return the full ordered entry sequence. If the trailing entry is narration
-	 * (ticket 41), pop it out and return it as `finalAnswer` \u2014 it was never
+	 * (ticket 41), pop it out and return it as `finalAnswer` — it was never
 	 * followed by anything, so it's the true final answer, not folded content. */
 	finalize(): FinalizeResult<C> {
 		this.resolvePending();
@@ -170,11 +168,11 @@ export class Grouper<C> {
 			this.entries = this.entries.slice(0, -1);
 			return { entries: this.entries, finalAnswer };
 		}
-		// No trailing text \u2014 the response ended on a group/thought. A response must
+		// No trailing text — the response ended on a group/thought. A response must
 		// still HAVE a visible answer: promote the LAST narration (the newest prose
 		// the model wrote) back out of the fold. Without this, a provider that
-		// trails off with thinking/tool activity after its real answer (Cursor) \u2014
-		// or a turn that just ends on tool calls \u2014 leaves the user with nothing.
+		// trails off with thinking/tool activity after its real answer (Cursor) —
+		// or a turn that just ends on tool calls — leaves the user with nothing.
 		for (let i = this.entries.length - 1; i >= 0; i--) {
 			const entry = this.entries[i];
 			if (entry.kind === "narration") {

@@ -458,9 +458,9 @@ test("acquireLeadingSpacerPatch: fails open on a drifted live prototype (found i
 	assert.equal(warnings.length, 1);
 });
 
-// \u2500\u2500 hideMessageTextBlock (ticket 41): retroactively hide a confirmed-narration
+// ── hideMessageTextBlock (ticket 41): retroactively hide a confirmed-narration
 // text block by rebuilding through whatever updateContent is CURRENTLY bound,
-// so it composes with the installed spacer patch instead of bypassing it \u2500\u2500
+// so it composes with the installed spacer patch instead of bypassing it ──
 
 test("hideMessageTextBlock: blanks the indexed text block, which then renders zero rows", () => {
 	const { instance } = makeFakeTarget();
@@ -476,7 +476,7 @@ test("hideMessageTextBlock: blanks the indexed text block, which then renders ze
 	// The message is rebuilt with content[1].text blanked: FakeText's own
 	// "(text.trim())" guard skips adding it, AND hasVisibleAfter is recomputed
 	// against the now-blanked content, so the TRAILING spacer (which only existed
-	// because visible text followed the thinking) is no longer added either \u2014 only
+	// because visible text followed the thinking) is no longer added either — only
 	// the LEADING spacer remains (thinking itself is still visible raw content, the
 	// pre-existing floor this patch layer doesn't touch without the strip patch).
 	assert.equal(instance.contentContainer.children.length, 2);
@@ -489,7 +489,7 @@ test("hideMessageTextBlock: composes with the installed spacer patch (bordering 
 	const patch = installLeadingSpacerPatch({ prototype: proto, spacerClass: Spacer });
 	const message: FakeMessage = { content: [{ type: "text", text: "Only narration, nothing else." }] };
 	instance.updateContent(message);
-	// Leading Spacer + FakeText (visible text \u2014 the patch only strips SUPPRESSED
+	// Leading Spacer + FakeText (visible text — the patch only strips SUPPRESSED
 	// thinking, so this spacer survives the initial render).
 	assert.equal(instance.contentContainer.children.length, 2);
 
@@ -497,7 +497,7 @@ test("hideMessageTextBlock: composes with the installed spacer patch (bordering 
 	assert.equal(hidden, true);
 	// Rebuilt through the PATCHED updateContent: the text is gone, and since the
 	// message is now visually all-blank, the patch's structural strip also removes
-	// the now-dead leading Spacer \u2014 zero rows total, matching a suppressed thinking
+	// the now-dead leading Spacer — zero rows total, matching a suppressed thinking
 	// message.
 	assert.equal(instance.contentContainer.children.length, 0);
 	patch.uninstall();
@@ -512,7 +512,7 @@ test("hideMessageTextBlock: NEVER mutates the original message or its content ar
 	hideMessageTextBlock(instance, 0);
 
 	// The ORIGINAL object the caller (index.ts) still holds a reference to (e.g. for
-	// persistence / provider resend) is untouched \u2014 render-only, never a mutation.
+	// persistence / provider resend) is untouched — render-only, never a mutation.
 	assert.equal(original.content[0].text, "Keep me intact.");
 	assert.equal(original.content, originalContentArray);
 	// instance.lastMessage now points at a NEW object (the rebuild), not `original`.
@@ -572,11 +572,11 @@ test("hideMessageTextBlock: fails open when the instance has no lastMessage or u
 	assert.equal(hideMessageTextBlock(bare, 0), false);
 });
 
-// \u2500\u2500 rehideNarrationAfterRebuild (ticket 41): re-apply hides across a rebuilt
-// tree after compaction/resume/fork, by TEXT match since identity is gone \u2500\u2500
+// ── rehideNarrationAfterRebuild (ticket 41): re-apply hides across a rebuilt
+// tree after compaction/resume/fork, by TEXT match since identity is gone ──
 
 test("rehideNarrationAfterRebuild: hides every matching text block across multiple instances", () => {
-	// makeLiveAmc (not the bare makeFakeTarget) \u2014 findAssistantMessageComponents'
+	// makeLiveAmc (not the bare makeFakeTarget) — findAssistantMessageComponents'
 	// duck-type ALSO requires the thinking-setter marker, which only makeLiveAmc adds.
 	const a = makeLiveAmc([{ type: "text", text: "Folded narration one." }]);
 	const b = makeLiveAmc([{ type: "thinking", thinking: "Planning" }, { type: "text", text: "Folded narration two." }]);
@@ -587,7 +587,7 @@ test("rehideNarrationAfterRebuild: hides every matching text block across multip
 	assert.equal(hidden, 2);
 	assert.equal(a.contentContainer.children.some((ch) => ch instanceof FakeText), false);
 	assert.equal(b.contentContainer.children.some((ch) => ch instanceof FakeText), false);
-	// The final answer's text is NOT in the set \u2014 stays fully visible natively.
+	// The final answer's text is NOT in the set — stays fully visible natively.
 	assert.equal(c.contentContainer.children.some((ch) => ch instanceof FakeText), true);
 });
 

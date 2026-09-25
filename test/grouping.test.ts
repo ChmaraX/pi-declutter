@@ -103,7 +103,7 @@ test("text_end with content breaks even when no delta carried it, and records a 
 	g.textStart();
 	g.textEnd("All done."); // provider delivered whole block in text_end
 	g.addCall("bash");
-	// The response ends on a group with ONE narration \u2014 promotion pulls it back
+	// The response ends on a group with ONE narration — promotion pulls it back
 	// out as the answer (a response must never be answerless), leaving the two
 	// groups it separated.
 	const { entries, finalAnswer, promoted } = g.finalize();

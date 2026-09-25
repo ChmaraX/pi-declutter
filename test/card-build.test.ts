@@ -129,7 +129,7 @@ test("settleAction: a group with a label but zero items still counts as renderab
 	assert.equal(settleAction(labelOnly, true), "settle-live");
 });
 
-// \u2500\u2500 Narration entries (ticket 41) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Narration entries (ticket 41) ────────────────────────────────────────────────
 
 test("buildCardEntries: a narration entry carries the full text plus a derived summary", () => {
 	const entries: Entry<ToolCall>[] = [{ kind: "narration", text: "**Checking config**\nThe file looks fine so far." }];

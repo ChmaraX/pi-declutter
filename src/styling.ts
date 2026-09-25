@@ -1,6 +1,6 @@
-// Pure theme-styling helpers shared by the card renderer and the output modal
-// (ticket 38). They translate the pure card-shape Tone/Segment/Line data into
-// themed strings; no closure state, only the live Theme passed in.
+// Pure theme-styling helpers shared by the card renderer and the output modal.
+// They translate the pure card-shape Tone/Segment/Line data into themed
+// strings; no closure state, only the live Theme passed in.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Segment, ShapeLine, Tone } from "./card-shape.ts";
@@ -27,8 +27,8 @@ export function styleSegment(theme: Theme, segment: Segment): string {
 }
 
 /** Render one shape line: `indent` leading spaces then the themed segments. A
- * hovered clickable row (ticket 24) is bolded for a theme-consistent highlight
- * (its chevron is already bumped to `accent` in shapeCard); bold avoids the ANSI
+ * hovered clickable row is bolded for a theme-consistent highlight (its
+ * chevron is already bumped to `accent` in shapeCard); bold avoids the ANSI
  * bg-reset seam that nesting a second background inside the card's
  * customMessageBg Box would leave on the row's trailing pad. */
 export function styleLine(theme: Theme, line: ShapeLine): string {

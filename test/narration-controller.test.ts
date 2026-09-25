@@ -63,7 +63,7 @@ function cardEntries(...texts: string[]): CardEntry[] {
 	return texts.map((text) => ({ kind: "narration" as const, narration: { text, summary: text } }));
 }
 
-// ── pending capture \u2192 confirm hides via injected hide fn ─────────────────────
+// ── pending capture → confirm hides via injected hide fn ─────────────────────
 
 test("captureTextEnd + confirmNonFinal: hides the captured block via the injected hide fn and requests a render", () => {
 	const { controller, rec } = makeController();

@@ -1,23 +1,22 @@
 /**
- * Pure SGR mouse-packet parsing seam (tickets 09 + 24).
+ * Pure SGR mouse-packet parser.
  *
  * Regular mode does not route mouse events to components, so the extension turns
  * on SGR mouse reporting and parses the raw packets out of onTerminalInput
  * itself. SGR encoding is `ESC [ < code ; col ; row` followed by `M` (press) or
- * `m` (release), with 1-based coords. This module is a minimal own-code subset of
- * pi-cc-extensions' sgr-mouse util (no shared import) and carries NO TUI/pi-agent
- * dependency, so it is unit-testable with plain strings (test/mouse.test.ts).
+ * `m` (release), with 1-based coords. No TUI/pi-agent dependency, so it is
+ * unit-testable with plain strings (test/mouse.test.ts).
  *
- * Reviewer P1 (ticket 24) — fragmented packets must NOT leak into the editor:
- * under DECSET 1003 a fast-motion burst floods packets that can split at a read
- * boundary, so a chunk may end mid-packet (e.g. "…\x1b[<35;40;1" with no final
- * M/m). parseSgrMousePackets therefore consumes only the COMPLETE-packet prefix
- * of a chunk, returns any trailing incomplete "\x1b[<…" as a `residual` the
- * caller prepends to the next chunk (so the packet completes and is parsed there
- * instead of leaking), and returns the remaining non-mouse bytes as `passthrough`
- * for the editor. The residual is capped (SGR_RESIDUAL_MAX): a would-be prefix
- * that grows past the cap, or that turns out not to be a mouse prefix at all, is
- * released as passthrough rather than held or dropped.
+ * Fragmented packets must NOT leak into the editor: under DECSET 1003 a
+ * fast-motion burst floods packets that can split at a read boundary, so a
+ * chunk may end mid-packet (e.g. "…\x1b[<35;40;1" with no final M/m).
+ * parseSgrMousePackets therefore consumes only the COMPLETE-packet prefix of a
+ * chunk, returns any trailing incomplete "\x1b[<…" as a `residual` the caller
+ * prepends to the next chunk (so the packet completes and is parsed there
+ * instead of leaking), and returns the remaining non-mouse bytes as
+ * `passthrough` for the editor. The residual is capped (SGR_RESIDUAL_MAX): a
+ * would-be prefix that grows past the cap, or that turns out not to be a mouse
+ * prefix at all, is released as passthrough rather than held or dropped.
  */
 
 /** One parsed SGR mouse packet (press/release/motion). */
@@ -55,10 +54,10 @@ const SGR_MOUSE_PACKET_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
 const SGR_MOUSE_PREFIX_RE = /^\x1b(\[(<[\d;]*)?)?$/;
 
 /**
- * Parse the leading complete-packet run of a chunk (ticket 09 + reviewer P1).
- * Returns the parsed packets, a trailing incomplete-packet `residual` to carry
- * into the next chunk, and any remaining non-mouse `passthrough` for the editor.
- * Pure: the caller owns the residual buffer across chunks.
+ * Parse the leading complete-packet run of a chunk. Returns the parsed
+ * packets, a trailing incomplete-packet `residual` to carry into the next
+ * chunk, and any remaining non-mouse `passthrough` for the editor. Pure: the
+ * caller owns the residual buffer across chunks.
  */
 export function parseSgrMousePackets(data: string): SgrMouseParse {
 	const packets: MousePacket[] = [];
@@ -98,8 +97,8 @@ export function isSgrLeftPress(packet: MousePacket): boolean {
 	return packet.final === "M" && isSgrLeftButton(packet.code) && (packet.code & 32) === 0;
 }
 
-/** A motion report (any-motion 1003 sets bit 32; ticket 24 hover). Covers both
- * no-button hover (code 35) and button-held drag motion — both update hover. */
+/** A motion report (any-motion 1003 sets bit 32). Covers both no-button hover
+ * (code 35) and button-held drag motion — both update hover. */
 export function isSgrMotion(packet: MousePacket): boolean {
 	return (packet.code & 32) !== 0;
 }

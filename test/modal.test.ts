@@ -103,7 +103,7 @@ test("a thought modal with no summary omits the trailing separator", () => {
 	assert.equal(content.title, "Thought 1s");
 });
 
-// \u2500\u2500 narrationModalContent (ticket 41) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── narrationModalContent (ticket 41) ────────────────────────────────────────────
 
 test("a narration modal titles with the summary and a Narration caption, full body + copy", () => {
 	const content = narrationModalContent(

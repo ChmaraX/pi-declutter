@@ -1,10 +1,9 @@
-// Output modal component (ticket 35), split out of index.ts (ticket 38). A
-// focused overlay showing one member's full output (or one thought's text),
-// scrollable and copyable. Rendered via ctx.ui.custom({overlay:true}); the TUI
-// gives it keyboard focus and calls handleInput. Bordered like the old inline box
-// but full-height and scrollable: title bar (label + duration + badge / thought
-// summary), a scroll window over the body, and a footer hint line. `c` copies the
-// untruncated raw text; ↑/↓/PgUp/PgDn/Home/End scroll; Esc closes.
+// Output modal component: a focused overlay showing one member's full output
+// (or one thought's text), scrollable and copyable. Rendered via
+// ctx.ui.custom({overlay:true}); the TUI gives it keyboard focus and calls
+// handleInput. Bordered and full-height: title bar (label + duration + badge
+// / thought summary), a scroll window over the body, and a footer hint line.
+// `c` copies the untruncated raw text; ↑/↓/PgUp/PgDn/Home/End scroll; Esc closes.
 //
 // Pure of any activityFeed() closure state: the content, theme, and the
 // done/copy callbacks are all injected by the ModalController that owns it.
@@ -15,13 +14,13 @@ import type { Tone } from "./card-shape.ts";
 import { clampScrollTop, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
 import { styleTone } from "./styling.ts";
 
-/** Max body rows the modal shows before scrolling (ticket 35). The overlay's
- * maxHeight:80% ultimately bounds the box; this caps the body window so a huge
- * output scrolls rather than overflowing the overlay. */
+/** Max body rows the modal shows before scrolling. The overlay's maxHeight:80%
+ * ultimately bounds the box; this caps the body window so a huge output
+ * scrolls rather than overflowing the overlay. */
 const MODAL_BODY_MAX_ROWS = 24;
 
 /** Non-body rows the modal frame always draws: top border, title, caption,
- * caption separator, footer separator, footer, bottom border (review P2 #4).
+ * caption separator, footer separator, footer, bottom border.
  * Subtracted from the overlay's height when sizing the body viewport. */
 const MODAL_CHROME_ROWS = 7;
 
@@ -51,16 +50,16 @@ export class OutputModal implements Focusable {
 	/** Rows the body area got last render, so PgUp/PgDn page by a real screen. */
 	private lastViewport = 10;
 	/** Live terminal height, fed by the overlay's `visible(termW, termH)` callback
-	 * each render cycle (review P2 #4). Lets the body viewport fit the real overlay
-	 * (maxHeight 80%) instead of a fixed cap that clips the footer on short
-	 * terminals. 0 until the first callback; render() then falls back to the cap. */
+	 * each render cycle. Lets the body viewport fit the real overlay (maxHeight
+	 * 80%) instead of a fixed cap that clips the footer on short terminals. 0
+	 * until the first callback; render() then falls back to the cap. */
 	private termHeight = 0;
-	/** Live terminal width, fed by the overlay's `visible(termW, termH)` callback
-	 * (ticket 39). Lets a mid-session resize reflow the open modal. 0 until the
+	/** Live terminal width, fed by the overlay's `visible(termW, termH)`
+	 * callback. Lets a mid-session resize reflow the open modal. 0 until the
 	 * first callback; render() wraps against its own width argument regardless. */
 	private termWidth = 0;
 	/** Body wrapped to the last render width, memoized so wrapping runs once per
-	 * width change rather than every frame (ticket 39). */
+	 * width change rather than every frame. */
 	private wrappedBody: string[] = [];
 	private wrappedForWidth = -1;
 	/** Content width the body was last wrapped/scrolled against, so handleInput's
@@ -70,7 +69,7 @@ export class OutputModal implements Focusable {
 	private readonly theme: Theme;
 	private readonly done: (result: void) => void;
 	private readonly onCopy: () => void;
-	/** True while the footer shows "\u2713 Copied" (set/cleared by ModalController
+	/** True while the footer shows "✓ Copied" (set/cleared by ModalController
 	 * around its feedback timer). */
 	private copiedVisible = false;
 
@@ -96,12 +95,12 @@ export class OutputModal implements Focusable {
 	}
 
 	/** Called from the overlay's `visible` callback with the current terminal width
-	 * so a resize reflows the wrapped body (ticket 39). */
+	 * so a resize reflows the wrapped body. */
 	setTerminalWidth(width: number): void {
 		this.termWidth = width;
 	}
 
-	/** The body wrapped to `innerContentWidth`, memoized per width (ticket 39). */
+	/** The body wrapped to `innerContentWidth`, memoized per width. */
 	private bodyRows(innerContentWidth: number): string[] {
 		if (this.wrappedForWidth !== innerContentWidth) {
 			this.wrappedBody = wrapBody(this.content.body, innerContentWidth, visibleWidth);
@@ -160,15 +159,15 @@ export class OutputModal implements Focusable {
 
 		// Body: a scroll window. Chrome is title(2)+caption(1)+sep(1)+footersep(1)
 		// +footer(1)+top/bottom border(2) = MODAL_CHROME_ROWS. When the overlay has
-		// reported a terminal height (review P2 #4), size the viewport to fit
-		// 80% of it (matching maxHeight:"80%") minus chrome, so the footer/bottom
-		// border are never clipped on a short terminal; otherwise fall back to the
-		// fixed cap. Either way scroll covers any overflow.
+		// reported a terminal height, size the viewport to fit 80% of it (matching
+		// maxHeight:"80%") minus chrome, so the footer/bottom border are never
+		// clipped on a short terminal; otherwise fall back to the fixed cap.
+		// Either way scroll covers any overflow.
 		const overlayRows = this.termHeight > 0 ? Math.floor(this.termHeight * 0.8) : MODAL_BODY_MAX_ROWS + MODAL_CHROME_ROWS;
 		const roomForBody = Math.max(1, overlayRows - MODAL_CHROME_ROWS);
-		// Body is word-wrapped to the content width (ticket 39), so long lines flow
-		// onto as many display rows as needed instead of being truncated with "…".
-		// The body cell has one leading space, so wrap to innerW - 1.
+		// Body is word-wrapped to the content width, so long lines flow onto as
+		// many display rows as needed instead of being truncated with "…". The
+		// body cell has one leading space, so wrap to innerW - 1.
 		const innerContentWidth = Math.max(1, innerW - 1);
 		this.lastInnerContentWidth = innerContentWidth;
 		const wrapped = this.bodyRows(innerContentWidth);
@@ -177,8 +176,8 @@ export class OutputModal implements Focusable {
 		this.top = clampScrollTop(this.top, wrapped.length, viewport);
 		const slice = visibleSlice(wrapped, this.top, viewport);
 		for (const bodyLine of slice) {
-			// Body is CONTENT the user opened to read \u2014 normal text colour (owner
-			// decision, same reasoning as the narration rows). Chrome stays dim.
+			// Body is CONTENT the user opened to read — normal text colour, same
+			// reasoning as the narration rows. Chrome stays dim.
 			lines.push(rowLine(` ${th.fg("text", bodyLine)}`));
 		}
 		// Pad the body area to a stable height so the box doesn't jump while scrolling
@@ -186,7 +185,7 @@ export class OutputModal implements Focusable {
 		for (let i = slice.length; i < viewport; i++) lines.push(rowLine(""));
 
 		// Footer hint. After a copy, "c copy" becomes a success-toned "✓ Copied"
-		// for a moment (owner request: feedback contained to the floating pane).
+		// for a moment; the feedback is contained to the floating pane.
 		const hint = scrollHint(this.top, viewport, wrapped.length);
 		const hintPart = hint ? `${hint}  ·  ` : "";
 		const footer = this.copiedVisible

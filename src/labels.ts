@@ -1,7 +1,5 @@
 /**
- * Group-label heuristics for the activity feed — typed TypeScript port of
- * `prototypes/labels/heuristics.mjs` (ticket 05) with the two upgrades the
- * prototype report recommends (`prototypes/labels/report.md`):
+ * Group-label heuristics for the activity feed.
  *
  *   1. A per-tool label map for self-describing custom / MCP tools, so tools
  *      that fall into the generic `tools` bucket render an informative label
@@ -12,7 +10,7 @@
  *
  * All functions are pure: same input → same output, no side effects.
  *
- * Ticket-02 bucket rules (see .scratch/activity-feed/issues/02-grouping-semantics.md):
+ * Bucket rules:
  *   files    = read | edit | write
  *   searches = grep | find | ls
  *   commands = bash | powershell
@@ -31,25 +29,25 @@ export interface ToolCallLike {
 	arguments?: Record<string, unknown>;
 }
 
-// ── Single per-tool-name dispatch table (review finding 13) ────────────────────
+// ── Single per-tool-name dispatch table ─────────────────────────────────────
 // Every built-in tool's bucket / row glyph / command-ness / inline-preview
 // eligibility, in ONE place. bucketOf, toolGlyph (card-shape.ts), isCommandTool,
 // and isPreviewTool (index.ts) all read this instead of re-listing tool names
 // in their own switch/Set. A name absent from this table is an MCP/custom tool:
-// every reader falls back to today's behavior (generic "tools" bucket, "◆"
+// every reader falls back to the default behavior (generic "tools" bucket, "◆"
 // glyph, not a command, no inline preview) via its own default, not a table row.
 export interface ToolTraits {
 	bucket: Bucket;
-	/** Member-row mark glyph (ticket 17 G4, atlas "Row anatomy"). */
+	/** Member-row mark glyph. */
 	glyph: string;
 	/** True for the tools whose result is a shell command run (bash/powershell):
 	 * they get a `$ <command>` modal header and drive the `isError` exit-code
 	 * badge path. Absent (falsy) for everything else. */
 	isCommand?: boolean;
-	/** True for tools whose result output is worth an inline preview tail
-	 * (ticket 12 req 5): commands and searches. read/edit/write are excluded —
-	 * their target line already says everything useful, and file bodies would
-	 * be huge. Absent (falsy) for everything else. */
+	/** True for tools whose result output is worth an inline preview tail:
+	 * commands and searches. read/edit/write are excluded — their target line
+	 * already says everything useful, and file bodies would be huge. Absent
+	 * (falsy) for everything else. */
 	preview?: boolean;
 }
 
@@ -65,13 +63,12 @@ const TOOL_TRAITS: Record<string, ToolTraits> = {
 };
 
 /** Bucket for a tool name; unknown/MCP tools fall into the generic "tools"
- * bucket (ticket-02 default). */
+ * bucket. */
 export function bucketOf(name: string | undefined): Bucket {
 	return (name && TOOL_TRAITS[name]?.bucket) || "tools";
 }
 
-/** Row-mark glyph for a tool name (ticket 17 G4); unknown/MCP tools get the
- * generic "◆". */
+/** Row-mark glyph for a tool name; unknown/MCP tools get the generic "◆". */
 export function toolTraitGlyph(name: string | undefined): string {
 	return (name && TOOL_TRAITS[name]?.glyph) || "◆";
 }
@@ -82,8 +79,8 @@ export function isCommandTool(name: string | undefined): boolean {
 	return Boolean(name && TOOL_TRAITS[name]?.isCommand);
 }
 
-/** Whether a tool's result output is worth an inline preview tail (ticket 12
- * req 5); false for everything else, including unknown/MCP tools. */
+/** Whether a tool's result output is worth an inline preview tail; false for
+ * everything else, including unknown/MCP tools. */
 export function isPreviewTool(name: string | undefined): boolean {
 	return Boolean(name && TOOL_TRAITS[name]?.preview);
 }
@@ -146,12 +143,12 @@ function stripCommandWrappers(command: string): string {
 	return cmd;
 }
 
-// Max length of a member-row command label before end-truncation (ticket 17 /
-// atlas "Row anatomy": long commands truncate with …).
+// Max length of a member-row command label before end-truncation (long
+// commands truncate with …).
 const MAX_COMMAND_LABEL = 56;
 
-// Concrete command target for a member row (ticket 17): the unwrapped command
-// with collapsed whitespace, end-truncated with … — e.g. "git log --oneline -5",
+// Concrete command target for a member row: the unwrapped command with
+// collapsed whitespace, end-truncated with … — e.g. "git log --oneline -5",
 // or "pnpm nx run-many --target=test --all --output-style=static > /tmp/…".
 function commandTarget(command: unknown): string {
 	if (typeof command !== "string") return "a command";
@@ -209,10 +206,10 @@ function customToolLabel(name: string, args: Record<string, unknown>): string {
 
 // Whether describeCall(call) resolves to a BARE generic fallback label
 // ("Used Cursor" / "Used <family>" / "Used <name>") rather than a concrete,
-// self-describing one. The itemized ledger appends an args gist only for these
-// (ticket 07 / 37): structured signal, so a wording change to a concrete custom
-// label can never silently flip the gist on/off. A call is never generic when
-// its tool has a TOOL_TRAITS row (describeCall's explicit file/search/command
+// self-describing one. The itemized ledger appends an args gist only for
+// these: a structured signal, so a wording change to a concrete custom label
+// can never silently flip the gist on/off. A call is never generic when its
+// tool has a TOOL_TRAITS row (describeCall's explicit file/search/command
 // cases below are never generic); mirrors customToolLabel's own "Used …"
 // branches for the default (tools-bucket) case.
 export function describeCallIsGeneric(call: ToolCallLike): boolean {
@@ -267,8 +264,8 @@ export function argsGist(call: ToolCallLike): string {
 
 // ── Bucket count summary ────────────────────────────────────────────────────
 // "N files, M searches, K commands, T tools" — nonzero buckets only, in display
-// order. "" when there are no calls. Used for the live counter (below) and for a
-// group's collapsed count suffix (ticket 12 req 2).
+// order. "" when there are no calls. Used for the live counter (below) and for
+// a group's collapsed count suffix.
 export function bucketCountsText(calls: ToolCallLike[]): string {
 	const counts = countBuckets(calls);
 	const parts: string[] = [];

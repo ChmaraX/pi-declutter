@@ -1,15 +1,13 @@
-// NarrationController (ticket 41, review follow-up: owning module): owns the
-// pending\u2192confirm-hide\u2192promote/restore\u2192rehide-on-rebuild narration lifecycle \u2014
-// split out of the index.ts closure (same deps-injected pattern as
-// ModalController/PatchController) so the state machine is unit-testable
-// without pi's runtime.
+// NarrationController owns the pending→confirm-hide→promote/restore→
+// rehide-on-rebuild narration lifecycle as its own unit (same deps-injected
+// pattern as ModalController/PatchController), so the state machine is
+// unit-testable without pi's runtime.
 //
 // The PURE pieces stay where they are: Grouper.finalize()'s promoted/
 // finalAnswer decision (grouping.ts) and narrationTexts() (card-shape.ts) are
 // dependency-free and already unit-tested there. This controller ORCHESTRATES
 // them against the live AssistantMessageComponent tree via injected
-// hide/restore/rehide/find functions (patches.ts, wired by index.ts) \u2014 one
-// place to read the whole story instead of four.
+// hide/restore/rehide/find functions (patches.ts, wired by index.ts).
 
 import type { CardEntry } from "./card-shape.ts";
 import { narrationTexts } from "./card-shape.ts";
@@ -44,17 +42,17 @@ export interface NarrationControllerDeps {
 
 export class NarrationController {
 	// The most recently completed text block, captured at text_end, awaiting
-	// confirmation (ticket 41): AT MOST one at a time, since text blocks stream
-	// serially. If something follows it (a new tool call, new thinking, or
-	// another text block) it is confirmed non-final and its native rendering is
-	// hidden (folded into the card instead). If NOTHING follows before the
-	// response settles, it was the true final answer \u2014 never touched, stays
-	// visible exactly as pi always rendered it. Cleared on every confirm-or-
-	// reset boundary so a stale reference never leaks into the next response.
+	// confirmation: AT MOST one at a time, since text blocks stream serially.
+	// If something follows it (a new tool call, new thinking, or another text
+	// block) it is confirmed non-final and its native rendering is hidden
+	// (folded into the card instead). If NOTHING follows before the response
+	// settles, it was the true final answer — never touched, stays visible
+	// exactly as pi always rendered it. Cleared on every confirm-or-reset
+	// boundary so a stale reference never leaks into the next response.
 	private pending: NarrationHide | undefined;
-	/** Every narration hide of the CURRENT response, in confirm order (ticket 41
-	 * promotion): when finalize() promotes the last narration back out as the
-	 * answer, the matching record restores its native text block. */
+	/** Every narration hide of the CURRENT response, in confirm order: when
+	 * finalize() promotes the last narration back out as the answer, the
+	 * matching record restores its native text block. */
 	private hides: NarrationHide[] = [];
 	private readonly deps: NarrationControllerDeps;
 
@@ -69,19 +67,19 @@ export class NarrationController {
 	}
 
 	/** A fresh response begins (or resetResponse defensively re-runs): drop
-	 * pending/hide state WITHOUT hiding anything \u2014 a still-pending block from a
-	 * PREVIOUS response is moot (ticket 41): if it was genuinely that response's
-	 * final answer, its native rendering must stay untouched. */
+	 * pending/hide state WITHOUT hiding anything — a still-pending block from a
+	 * PREVIOUS response is moot: if it was genuinely that response's final
+	 * answer, its native rendering must stay untouched. */
 	reset(): void {
 		this.pending = undefined;
 		this.hides = [];
 	}
 
 	/**
-	 * Capture the text block that just ended (ticket 41), unambiguous at this
-	 * exact moment since no later message has started yet. Held until either
-	 * confirmed non-final (hidden, folded into the card) or the response settles
-	 * with nothing after it (the true final answer \u2014 left alone). No-op for an
+	 * Capture the text block that just ended, unambiguous at this exact moment
+	 * since no later message has started yet. Held until either confirmed
+	 * non-final (hidden, folded into the card) or the response settles with
+	 * nothing after it (the true final answer — left alone). No-op for an
 	 * empty/whitespace-only block (mirrors the grouper's own break condition).
 	 */
 	captureTextEnd(root: unknown, contentIndex: number, content: string): void {
@@ -92,38 +90,38 @@ export class NarrationController {
 	}
 
 	/**
-	 * Confirm any pending narration block as NON-final (ticket 41) and hide its
-	 * native rendering, folding it into the card instead. Called the moment ANY
+	 * Confirm any pending narration block as NON-final and hide its native
+	 * rendering, folding it into the card instead. Called the moment ANY
 	 * activity is known to follow it: a new tool call, a new thinking span, or
-	 * another text block starting \u2014 each is proof the pending block was not the
+	 * another text block starting — each is proof the pending block was not the
 	 * last thing in the response. No-op when nothing is pending. Best-effort: a
 	 * failed hide (component gone, shape drifted) leaves the text visible
-	 * natively \u2014 the card row still exists from Grouper.textEnd either way, so
+	 * natively — the card row still exists from Grouper.textEnd either way, so
 	 * nothing is ever lost, only occasionally shown in both places.
 	 */
 	confirmNonFinal(): void {
 		if (!this.pending) return;
 		const hidden = this.deps.hide(this.pending.instance, this.pending.contentIndex);
 		// Record the hide (in confirm order) so settle() can RESTORE the last one
-		// when the response ends without a final answer (promotion \u2014 grouping.ts).
+		// when the response ends without a final answer (promotion — grouping.ts).
 		if (hidden) this.hides.push(this.pending);
 		this.pending = undefined;
 		if (hidden) this.deps.requestRender();
 	}
 
 	/**
-	 * Resolve the narration lifecycle at settle (ticket 41), given
-	 * Grouper.finalize()'s promoted/finalAnswer decision (grouping.ts \u2014 stays
-	 * pure/unchanged). Whatever `pending` pointed at is now resolved either way
-	 * (folded into the finalized entries as a narration entry, or popped out as
-	 * the final answer) \u2014 clear it defensively.
+	 * Resolve the narration lifecycle at settle, given Grouper.finalize()'s
+	 * promoted/finalAnswer decision (grouping.ts — stays pure/unchanged).
+	 * Whatever `pending` pointed at is now resolved either way (folded into the
+	 * finalized entries as a narration entry, or popped out as the final
+	 * answer) — clear it defensively.
 	 *
-	 * Promotion (owner bug: Cursor trails thinking/tool dumps AFTER the real
-	 * answer, and a turn can end on tool calls): the response produced no
-	 * trailing text, so finalize pulled the LAST narration back out as the
-	 * answer. Its native block was hidden at confirm time \u2014 restore it so the
-	 * response is never visibly answerless. Match by text, last record first
-	 * (records and entries append in the same order).
+	 * Promotion: when a provider trails thinking/tool activity after the real
+	 * answer, or a turn ends on tool calls, the response produces no trailing
+	 * text, so finalize pulls the LAST narration back out as the answer. Its
+	 * native block was hidden at confirm time — restore it so the response is
+	 * never visibly answerless. Match by text, last record first (records and
+	 * entries append in the same order).
 	 */
 	settle(finalAnswer: string | undefined, promoted: boolean | undefined): void {
 		this.pending = undefined;
@@ -142,13 +140,13 @@ export class NarrationController {
 	}
 
 	/**
-	 * Re-hide folded narration after a transcript rebuild (ticket 41: /reload,
-	 * the session_start sweep). The rebuilt tree renders the ORIGINAL un-blanked
-	 * stored messages, and a reload also throws away the old hide registry, so
-	 * every narration text known from persisted card entries must be re-applied.
-	 * `cardEntryLists` is every card's `entries` the caller collected (pi-specific
-	 * traversal of session entries stays in the caller \u2014 this module takes only
-	 * the already-extracted CardEntry arrays, per its no-pi-event-types contract).
+	 * Re-hide folded narration after a transcript rebuild (e.g. /reload). The
+	 * rebuilt tree renders the ORIGINAL un-blanked stored messages, and a
+	 * reload also throws away the old hide registry, so every narration text
+	 * known from persisted card entries must be re-applied. `cardEntryLists` is
+	 * every card's `entries` the caller collected (pi-specific traversal of
+	 * session entries stays in the caller — this module takes only the
+	 * already-extracted CardEntry arrays, per its no-pi-event-types contract).
 	 */
 	sweepAfterRebuild(root: unknown, cardEntryLists: Iterable<readonly CardEntry[]>): void {
 		const texts = new Set<string>();

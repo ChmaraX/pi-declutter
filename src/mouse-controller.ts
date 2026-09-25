@@ -1,13 +1,11 @@
 /**
- * MouseController (ticket 09/24, split out per review — index.ts had grown to
- * ~1800 lines): owns regular-mode SGR mouse reporting end to end — enabling it
- * on the captured TUI handle, parsing packets from raw terminal input (residual
- * buffering for boundary-split packets, reviewer P1), and resolving a click/move
- * packet into a synthesized TUI mouse dispatch that the retained component tree
- * routes to the card under the cursor. Regular mode does not route mouse events
- * to components natively (the terminal owns scrollback), so this reimplements
- * just enough of that routing (technique ported from pi-cc-extensions
- * renderer/mouse, no shared code). Fullscreen routes clicks/moves to
+ * MouseController owns regular-mode SGR mouse reporting end to end — enabling
+ * it on the captured TUI handle, parsing packets from raw terminal input
+ * (residual buffering for boundary-split packets), and resolving a click/move
+ * packet into a synthesized TUI mouse dispatch that the retained component
+ * tree routes to the card under the cursor. Regular mode does not route mouse
+ * events to components natively (the terminal owns scrollback), so this
+ * reimplements just enough of that routing. Fullscreen routes clicks/moves to
  * MouseRegion natively and never calls this controller.
  *
  * The pure SGR packet parsing (parseSgrMousePackets / isSgrLeftPress /
@@ -15,22 +13,20 @@
  * terminal (test/mouse.test.ts); this controller USES that module, it does not
  * duplicate it. Injected deps (commitHover/clearHover) keep the controller
  * unit-testable with a fake TUI, matching the ModalController/PatchController
- * extraction pattern (ticket 38).
+ * extraction pattern.
  */
 
 import type { TUI, TuiMainScreenRenderState, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
 
 // SGR button tracking (1000) + ANY-MOTION tracking (1003) + SGR extended
-// coordinates (1006). Ticket 24 hover needs motion reports WITHOUT a button held,
-// so 1003 (any-motion) is the required mode: 1002 (button-motion) only reports
-// movement while a button is down and cannot drive a bare hover — matching the
-// mode pi-cc-extensions' renderer/mouse uses for regular-mode hover
-// (TOOL_MOUSE_MOTION_ENABLE = "\x1b[?1003h\x1b[?1006h"). 1003 is a superset of
-// 1000; keeping 1000h is harmless. The trade-off is heavier input traffic (a
-// packet per cell the cursor crosses) — bounded by rendering ONLY when the hovered
-// node changes (commitHover), and it shares the existing selection trade-off
-// (Shift/Option-drag still selects natively).
+// coordinates (1006). Hover needs motion reports WITHOUT a button held, so
+// 1003 (any-motion) is the required mode: 1002 (button-motion) only reports
+// movement while a button is down and cannot drive a bare hover. 1003 is a
+// superset of 1000; keeping 1000h is harmless. The trade-off is heavier input
+// traffic (a packet per cell the cursor crosses) — bounded by rendering ONLY
+// when the hovered node changes (commitHover), and it shares the existing
+// selection trade-off (Shift/Option-drag still selects natively).
 export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1003h\x1b[?1006h";
 export const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1003l\x1b[?1006l";
 
@@ -49,18 +45,18 @@ export interface MouseControllerDeps {
 	 * inline behavior). */
 	runtime: MouseRuntime;
 	/** Set the hovered card/node, re-rendering ONLY when it actually changes
-	 * (ticket 24 throttle). Passing undefined ids clears the hover (leave). */
+	 * (throttled). Passing undefined ids clears the hover (leave). */
 	commitHover(cardId: string | undefined, nodeId: string | undefined): void;
-	/** Clear any hover highlight (ticket 24): called on teardown so a finalized/
-	 * torn-down session never keeps a stale row lit. */
+	/** Clear any hover highlight — called on teardown so a finalized/torn-down
+	 * session never keeps a stale row lit. */
 	clearHover(): void;
 }
 
 export class MouseController {
 	private readonly deps: MouseControllerDeps;
 	private mouseReportingOn = false;
-	// Residual buffer for a mouse packet split across a read boundary (reviewer
-	// P1): handleTerminalInput holds any trailing incomplete "\x1b[<…" here and
+	// Residual buffer for a mouse packet split across a read boundary:
+	// handleTerminalInput holds any trailing incomplete "\x1b[<…" here and
 	// prepends it to the next chunk so the completing bytes never leak into the
 	// editor.
 	private mouseResidual = "";
@@ -108,15 +104,15 @@ export class MouseController {
 			}
 		}
 		this.mouseReportingOn = false;
-		this.mouseResidual = ""; // reviewer P1: drop any half-parsed packet on teardown
-		this.deps.clearHover(); // ticket 24: no stale highlight after teardown
+		this.mouseResidual = ""; // drop any half-parsed packet on teardown
+		this.deps.clearHover(); // no stale highlight after teardown
 	}
 
 	handleTerminalInput(data: string): { consume?: boolean; data?: string } | undefined {
 		const tui = this.deps.runtime.tui as RegularTui | undefined;
 		if (!tui || tui.mode !== "regular") return undefined;
 		// Prepend any held incomplete-packet residual so a packet fragmented at the
-		// previous read boundary completes here instead of leaking (reviewer P1).
+		// previous read boundary completes here instead of leaking.
 		const input = this.mouseResidual + data;
 		const parsed = parseSgrMousePackets(input);
 		this.mouseResidual = parsed.residual;
@@ -136,23 +132,23 @@ export class MouseController {
 			if (isSgrLeftPress(packet)) {
 				if (this.resolveClickToCard(tui, packet)) toggled = true;
 			} else if (isSgrMotion(packet)) {
-				// Only the FINAL motion position matters for hover (reviewer P2): a fast
-				// 1003 burst packs many motions per chunk, but resolving every one would
-				// dispatch captureRenderState + handleMouse per packet. Keep the last and
+				// Only the FINAL motion position matters for hover: a fast 1003 burst
+				// packs many motions per chunk, but resolving every one would dispatch
+				// captureRenderState + handleMouse per packet. Keep the last and
 				// resolve once below.
 				lastMotion = packet;
 			}
 		}
-		// Hover (ticket 24): resolve the last motion to a card/node and re-render only
-		// when the hovered node changes (commitHover throttles). A move over no card
+		// Resolve the last motion to a card/node and re-render only when the
+		// hovered node changes (commitHover throttles). A move over no card
 		// clears the hover (leave).
 		if (lastMotion) this.resolveHoverToCard(tui, lastMotion);
 		if (toggled) tui.requestRender();
 		// Consume the recognized SGR mouse packets — clicks, releases, wheel,
-		// right/middle — so raw \x1b[<..M bytes never leak into the editor (ticket 09
-		// fix). Any trailing non-mouse bytes that arrived in the same chunk are
-		// forwarded to the editor as passthrough; a trailing incomplete packet is held
-		// in mouseResidual (nothing to forward, so consume the rest).
+		// right/middle — so raw \x1b[<..M bytes never leak into the editor. Any
+		// trailing non-mouse bytes that arrived in the same chunk are forwarded
+		// to the editor as passthrough; a trailing incomplete packet is held in
+		// mouseResidual (nothing to forward, so consume the rest).
 		if (parsed.passthrough.length > 0) return { data: parsed.passthrough };
 		return { consume: true };
 	}
@@ -186,12 +182,12 @@ export class MouseController {
 	}
 
 	/**
-	 * Resolve a regular-mode motion report to a hovered card/node and commit it
-	 * (ticket 24). Uses the SAME dispatch path as clicks — a synthesized "move"
-	 * TuiMouseEvent through the TUI's handleMouse, which the retained tree routes to
-	 * the card under the cursor (onCardMouse stashes the resolved node via
-	 * recordMoveHit). If the move lands on no card, the stash stays undefined and
-	 * commitHover clears the hover (leave).
+	 * Resolve a regular-mode motion report to a hovered card/node and commit
+	 * it. Uses the SAME dispatch path as clicks — a synthesized "move"
+	 * TuiMouseEvent through the TUI's handleMouse, which the retained tree
+	 * routes to the card under the cursor (onCardMouse stashes the resolved
+	 * node via recordMoveHit). If the move lands on no card, the stash stays
+	 * undefined and commitHover clears the hover (leave).
 	 */
 	private resolveHoverToCard(tui: RegularTui, packet: MousePacket): void {
 		const state = tui.captureRenderState?.();

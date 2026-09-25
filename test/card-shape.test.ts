@@ -408,14 +408,14 @@ test("coalesceThoughts sums durations and keeps the LAST >=1s span's summary + t
 	assert.equal(out.summary, "Second real thought"); // last >=1s span wins
 	assert.deepEqual(out.tail, ["Second real thought", "line1", "line2"]);
 	// fullText now carries EVERY span in stream order (owner bug: multi-span
-	// providers \u2014 Cursor \u2014 lost all but the last span from the modal); the
+	// providers — Cursor — lost all but the last span from the modal); the
 	// summary/tail glance view stays chosen-span.
 	assert.equal(out.fullText, "tiny sub-second span\n\nFirst real thought\nbody a\n\nSecond real thought\nline1\nline2");
 });
 
 test("coalesceThoughts.fullText is UNTRUNCATED (ticket 40) while .tail stays previewLines-capped", () => {
 	// One line far longer than MAX_PREVIEW_LINE_LEN (120), and more real lines than
-	// MAX_THOUGHT_TAIL (10) \u2014 .tail must still cap/truncate for the compact card-row
+	// MAX_THOUGHT_TAIL (10) — .tail must still cap/truncate for the compact card-row
 	// glance; .fullText must carry every character and every line untouched.
 	const longLine = "x".repeat(300);
 	const manyLines = Array.from({ length: 15 }, (_, i) => `line ${i}`).join("\n");

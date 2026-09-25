@@ -183,7 +183,7 @@ export interface ShapeItem {
 	input?: string;
 }
 
-/** Character cap for a captured Input JSON \u2014 keeps persisted card data bounded
+/** Character cap for a captured Input JSON — keeps persisted card data bounded
  * (huge tool args like whole file bodies get end-truncated). */
 export const MAX_INPUT_CAPTURE = 4096;
 
@@ -266,7 +266,7 @@ export type CardEntry =
 
 /** Every narration entry's full text from a card's entries, in order (ticket 41).
  * Used to re-identify (by content, since object identity is gone) which native
- * text blocks a full transcript rebuild \u2014 compaction, /resume, /fork \u2014 must have
+ * text blocks a full transcript rebuild — compaction, /resume, /fork — must have
  * its hides re-applied to, so a previously-folded paragraph doesn't reappear
  * natively just because the tree was rebuilt from the original, un-blanked
  * stored messages (hideMessageTextBlock never touches what's persisted). */
@@ -421,14 +421,14 @@ export function deriveThoughtSummary(text: string): string {
 	return "";
 }
 
-/** Character budget for a narration row's inline summary \u2014 roughly 2\u20133 wrapped
- * terminal rows at common widths before the \u2026 cut (owner request: don't clip to
+/** Character budget for a narration row's inline summary — roughly 2–3 wrapped
+ * terminal rows at common widths before the … cut (owner request: don't clip to
  * one line; wrap first, truncate only after a few lines). */
 export const MAX_NARRATION_SUMMARY_LEN = 240;
 
 /**
  * Narration summary (ticket 41): unlike a thought summary (one dim metadata
- * line), a narration row IS the assistant's prose \u2014 keep much more of it.
+ * line), a narration row IS the assistant's prose — keep much more of it.
  * Collapse all whitespace runs (newlines included) to single spaces so the
  * renderer's natural Text wrapping flows it as a paragraph, strip the same
  * markdown noise as thought summaries, and end-truncate at
@@ -465,7 +465,7 @@ export function coalesceThoughts(spans: readonly ThoughtSpanInput[]): CoalescedT
 		summary: chosen ? deriveThoughtSummary(chosen.text) : "",
 		tail: chosen ? previewLines(chosen.text, MAX_THOUGHT_TAIL) : [],
 		// EVERY span's text in stream order, not just the chosen one (owner bug:
-		// providers that stream reasoning as many small spans \u2014 Cursor \u2014 had all
+		// providers that stream reasoning as many small spans — Cursor — had all
 		// but the last span silently dropped from the modal, and the content
 		// appeared to be "overwritten" as each new span replaced it). Summary/tail
 		// stay chosen-span (the glance view); the modal shows the whole run.
@@ -619,10 +619,10 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 			return;
 		}
 
-		// Narration entry (ticket 41): "\u203a <summary> \u25b8", clickable to open the full
-		// text in a modal \u2014 always openable, since a narration entry only ever exists
+		// Narration entry (ticket 41): "› <summary> ▸", clickable to open the full
+		// text in a modal — always openable, since a narration entry only ever exists
 		// when it captured non-whitespace text. The summary reads as NORMAL body text
-		// (theme "text" role, owner request) \u2014 it IS the assistant's prose, folded, not
+		// (theme "text" role, owner request) — it IS the assistant's prose, folded, not
 		// metadata like the dim thought/duration rows around it.
 		if (entry.kind === "narration") {
 			const narrationNode = narrationNodeId(k);
@@ -631,7 +631,7 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 			return;
 		}
 
-		// Group entry (only remaining case here \u2014 TS narrows CardEntry to "group"
+		// Group entry (only remaining case here — TS narrows CardEntry to "group"
 		// after the thought/narration early returns above).
 		const group = entry.group;
 		const groupNode = groupNodeId(k);

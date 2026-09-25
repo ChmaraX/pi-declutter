@@ -214,7 +214,7 @@ test("ActivityCard.render re-registers the row map on every call (last render wi
 test("ActivityCard.render highlights only the hovered card's hovered row", () => {
 	// A rendered line whose Segment tones are all plain "text"/"muted" (never
 	// "bold") is only ever wrapped in "**" by ActivityCard's own `line.hovered`
-	// bolding (styleLine), not by shapeCard's tone styling \u2014 so member rows are
+	// bolding (styleLine), not by shapeCard's tone styling — so member rows are
 	// the clean signal (the header row is unconditionally bold-toned already).
 	const view: ViewState = { cards: new Map(), models: new Map(), order: [] };
 	const rowMaps = new Map<string, string[]>();

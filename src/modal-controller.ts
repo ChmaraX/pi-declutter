@@ -1,6 +1,6 @@
-// ModalController (ticket 38): owns the output/thought modal lifecycle — open,
-// swap, copy, close, and teardown — extracted from the index.ts closure so the
-// open→swap→close sequencing is unit-testable with a fake UI context.
+// ModalController owns the output/thought/narration modal lifecycle — open,
+// swap, copy, close, and teardown — as its own unit, so the open→swap→close
+// sequencing is unit-testable with a fake UI context.
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CardModel } from "./card-model.ts";
@@ -13,8 +13,8 @@ import { itemModalContent, type ModalContent, narrationModalContent, thoughtModa
 export interface ModalComponent {
 	setTerminalHeight(height: number): void;
 	setTerminalWidth(width: number): void;
-	/** Show the in-modal "\u2713 Copied" footer feedback (owner request: contained
-	 * to the floating pane, not pi's status bar). */
+	/** Show the in-modal "✓ Copied" footer feedback, contained to the floating
+	 * pane rather than pi's status bar. */
 	showCopied(): void;
 	clearCopied(): void;
 }
@@ -24,11 +24,11 @@ export interface ModalOverlayHandle {
 	hide(): void;
 }
 
-/** How long the in-modal "\u2713 Copied" footer feedback stays visible. */
+/** How long the in-modal "✓ Copied" footer feedback stays visible. */
 const MODAL_COPY_FEEDBACK_MS = 1500;
 
-/** Widest the modal ever gets, in columns \u2014 on wide terminals a full-width
- * floating pane reads poorly (owner request: smaller max width). */
+/** Widest the modal ever gets, in columns — on wide terminals a full-width
+ * floating pane reads poorly. */
 const MODAL_MAX_WIDTH_COLS = 100;
 
 export interface ModalControllerDeps {
@@ -88,9 +88,9 @@ export class ModalController {
 		// onHandle callback captures the handle so a later open can swap it, and
 		// teardown can force-close it.
 		// Capture the live modal so the overlay's `visible` callback can feed it the
-		// current terminal height (review P2 #4). `visible` fires each render cycle.
+		// current terminal height. `visible` fires each render cycle.
 		let modal: ModalComponent | undefined;
-		// Width: 80% of the terminal but never wider than MODAL_MAX_WIDTH_COLS \u2014
+		// Width: 80% of the terminal but never wider than MODAL_MAX_WIDTH_COLS —
 		// computed at open (the overlay option is static; a mid-open resize still
 		// reflows the body via render width).
 		const cols = process.stdout.columns ?? 80;
@@ -121,9 +121,9 @@ export class ModalController {
 			.then(() => {
 				// Resolves only when THIS overlay closes via done() (Esc / q / click-out) —
 				// NOT on OverlayHandle.hide() used for a swap (interactive-mode only resolves
-				// custom() on done, review P2 #5). So on a genuine close we clear the handle;
-				// a swap path clears/repoints modalHandle itself in closeModal()/onHandle. A
-				// swapped-away OutputModal (≤64KB) is retained until process exit — bounded and
+				// custom() on done). So on a genuine close we clear the handle; a swap path
+				// clears/repoints modalHandle itself in closeModal()/onHandle. A swapped-away
+				// OutputModal (≤64KB) is retained until process exit — bounded and
 				// user-paced, accepted as a known minor.
 				this.modalHandle = undefined;
 			});
@@ -132,8 +132,8 @@ export class ModalController {
 	private copyModal(content: ModalContent, modal: ModalComponent | undefined): void {
 		void this.deps.copyToClipboard(content.copyText).then(
 			() => {
-				// Feedback lives INSIDE the modal footer (owner request), not pi's
-				// status bar near the input.
+				// Feedback lives INSIDE the modal footer, not pi's status bar near
+				// the input.
 				modal?.showCopied();
 				this.deps.requestRender();
 			},
@@ -161,9 +161,9 @@ export class ModalController {
 	openThoughtModal(cardId: string, entryIndex: number): void {
 		const entry = this.entryAt(cardId, entryIndex);
 		if (!entry || entry.kind !== "thought") return;
-		// Pass the raw untruncated span text (ticket 40) so the modal shows the full
-		// reasoning, not the compact previewLines-capped `tail` (that stays the card
-		// row's glance view). Mirrors the tool-row fullText pattern.
+		// Pass the raw untruncated span text so the modal shows the full reasoning,
+		// not the compact previewLines-capped `tail` (that stays the card row's
+		// glance view). Mirrors the tool-row fullText pattern.
 		this.showModal(thoughtModalContent(entry.thought, entry.thought.fullText));
 	}
 

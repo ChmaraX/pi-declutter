@@ -1,8 +1,7 @@
-// PatchController (ticket 38): owns the guarded leading-Spacer patch lifecycle —
-// lazy acquisition from a live AssistantMessageComponent, the probe-/command-
-// visible status, and teardown. Split out of the index.ts closure so the patch
-// state machine (pending → active/drift/no-instance) is unit-testable with a fake
-// TUI root (tickets 30/31).
+// PatchController owns the guarded leading-Spacer patch lifecycle — lazy
+// acquisition from a live AssistantMessageComponent, the probe-/command-
+// visible status, and teardown — as its own unit, so the patch state machine
+// (pending → active/drift/no-instance) is unit-testable with a fake TUI root.
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { acquireLeadingSpacerPatch, type LeadingSpacerPatch } from "./patches.ts";

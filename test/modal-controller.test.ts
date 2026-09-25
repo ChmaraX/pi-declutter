@@ -143,7 +143,7 @@ test("ModalController: thought modal only opens on a thought entry", () => {
 test("ModalController: thought modal body is the FULL captured text (ticket 40), not the compact tail", () => {
 	// tail is what the card row's glance view would show (short/capped); fullText is
 	// the real untruncated capture. The modal must render fullText, proving the
-	// fix threads entry.thought.fullText into thoughtModalContent \u2014 not tail.
+	// fix threads entry.thought.fullText into thoughtModalContent — not tail.
 	const full = "Paragraph one of real reasoning.\nParagraph two, much longer than the compact tail would ever keep.";
 	const thoughtModel = makeModel([
 		{ kind: "thought", thought: { ms: 4000, summary: "Planning", tail: ["Paragraph one\u2026"], fullText: full, live: false } },

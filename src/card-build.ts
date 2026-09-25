@@ -1,6 +1,5 @@
-// Pure card-building logic (tickets 12 + 21), split out of index.ts (ticket 38):
-// convert the grouper's ordered flow entries into renderable card data. No
-// closure state — testable directly.
+// Pure card-building logic: convert the grouper's ordered flow entries into
+// renderable card data. No closure state — testable directly.
 
 import {
 	type CardEntry,
@@ -33,20 +32,20 @@ export interface ToolCall {
 	startMs: number;
 	endMs?: number;
 	isError?: boolean;
-	/** Trimmed last-N output preview for command/search calls (ticket 12 req 5). */
+	/** Trimmed last-N output preview for command/search calls. */
 	resultPreview?: string[];
-	/** Exit code parsed from a failed command's output (ticket 17 badge). */
+	/** Exit code parsed from a failed command's output. */
 	exitCode?: number;
-	/** Full untruncated output for the modal (ticket 35): the whole tool_result
-	 * text, bounded to MAX_MODAL_CAPTURE. When the command truncated its own output
-	 * to a temp file, `fullOutputPath` points there and is read lazily on modal open
-	 * (its content supersedes this). */
+	/** Full untruncated output for the modal: the whole tool_result text,
+	 * bounded to MAX_MODAL_CAPTURE. When the command truncated its own output
+	 * to a temp file, `fullOutputPath` points there and is read lazily on modal
+	 * open (its content supersedes this). */
 	fullOutput?: string;
 	/** bash/powershell temp file holding the untruncated output when it truncated
 	 * (BashToolDetails.fullOutputPath); read lazily when the modal opens. */
 	fullOutputPath?: string;
 	/** Pre-computed member label for SYNTHETIC calls (a provider tool step
-	 * reconstructed from a thinking-channel dump, span-classify.ts) \u2014 there are
+	 * reconstructed from a thinking-channel dump, span-classify.ts) — there are
 	 * no real args for describeCall to describe. */
 	labelOverride?: string;
 }
@@ -61,14 +60,14 @@ export function toCallLike(call: ToolCall): ToolCallLike {
 	return { name: call.name, arguments: call.arguments };
 }
 
-/** Build one renderable tool item from a ledger call (ticket 12). */
+/** Build one renderable tool item from a ledger call. */
 export function toShapeItem(call: ToolCall): ShapeItem {
 	const running = call.endMs === undefined;
 	const durMs = Math.max(0, (call.endMs ?? Date.now()) - call.startMs);
 	const callLike = toCallLike(call);
 	let label = call.labelOverride ?? describeCall(callLike);
-	// Append an args gist only for a bare generic ("Used …") tool label — keyed off
-	// the structured predicate, not the label's prose (ticket 37). Never for a
+	// Append an args gist only for a bare generic ("Used …") tool label — keyed
+	// off the structured predicate, not the label's prose. Never for a
 	// synthetic call: its labelOverride already IS the whole story.
 	if (call.labelOverride === undefined && describeCallIsGeneric(callLike)) {
 		const gist = argsGist(callLike);
@@ -87,20 +86,20 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		fullOutput: call.fullOutput,
 		fullOutputPath: call.fullOutputPath,
 		// The `$ cmd` line IS a command tool's input; everything else gets the
-		// pretty-printed args so the modal is never empty (owner issue 2).
+		// pretty-printed args so the modal is never empty.
 		input: command === undefined ? formatCallInput(call.arguments) : undefined,
 	};
 }
 
 /**
- * Convert the grouper's ordered top-level entries into renderable card data
- * (ticket 12 + 21). Each entry is either a group of consecutive tool calls or a
- * meaningful thinking run, kept IN EVENT ORDER: a group entry builds one
- * ShapeItem per call (a call with no end time is still running — spinner glyph,
- * req 2/3) and derives its collapsed label/count from the calls; a thought entry
- * coalesces its consecutive spans into one "· Thought Ns" row (total duration,
- * last meaningful summary, bounded tail). Thought text never appears at the
- * collapsed group level (ticket 21).
+ * Convert the grouper's ordered top-level entries into renderable card data.
+ * Each entry is either a group of consecutive tool calls or a meaningful
+ * thinking run, kept IN EVENT ORDER: a group entry builds one ShapeItem per
+ * call (a call with no end time is still running — spinner glyph) and derives
+ * its collapsed label/count from the calls; a thought entry coalesces its
+ * consecutive spans into one "· Thought Ns" row (total duration, last
+ * meaningful summary, bounded tail). Thought text never appears at the
+ * collapsed group level.
  */
 export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveThinkingActive = false): CardEntryBuild {
 	const cardEntries: CardEntry[] = [];
@@ -115,10 +114,10 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 			continue;
 		}
 		if (entry.kind === "narration") {
-			// Ticket 41: an intermediate assistant paragraph folded into the card because
-			// something followed it (the true final answer never reaches here \u2014
-			// Grouper.finalize() pops it out first). Narration keeps a multi-line prose
-			// budget (owner request) \u2014 the renderer wraps it; \u2026 only after ~2-3 rows.
+			// An intermediate assistant paragraph folded into the card because
+			// something followed it (the true final answer never reaches here —
+			// Grouper.finalize() pops it out first). Narration keeps a multi-line
+			// prose budget — the renderer wraps it; … only after ~2-3 rows.
 			const summary = deriveNarrationSummary(entry.text) || "Message";
 			const narration: ShapeNarration = { text: entry.text, summary };
 			cardEntries.push({ kind: "narration", narration });
@@ -140,8 +139,8 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 	}
 
 	// Mark the trailing thought entry as live while a thinking span is still
-	// streaming (ticket 23): the grouper always exposes the in-progress run as the
-	// LAST snapshot entry, so its "Thinking… · Xs" row transforms in place to the
+	// streaming: the grouper always exposes the in-progress run as the LAST
+	// snapshot entry, so its "Thinking… · Xs" row transforms in place to the
 	// settled "Thought Ns · summary" once liveThinkingActive drops to false.
 	if (liveThinkingActive) {
 		const last = cardEntries[cardEntries.length - 1];
@@ -151,8 +150,8 @@ export function buildCardEntries(entries: ReadonlyArray<Entry<ToolCall>>, liveTh
 	return { entries: cardEntries, settledIds, failures };
 }
 
-/** What settleResponse should do with a freshly-built card, given whether a live
- * card model already exists (ticket 38: the settle decision made pure + testable).
+/** What settleResponse should do with a freshly-built card, given whether a
+ * live card model already exists.
  *   - "freeze-empty": nothing renderable → freeze any live card collapsed;
  *   - "settle-live": mutate the existing live model in place;
  *   - "append-settled": no live card (tool-less response) → append a settled one. */

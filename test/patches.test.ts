@@ -26,6 +26,7 @@ import {
 	acquireLeadingSpacerPatch,
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
+	installClickAwayClosePatch,
 	installLeadingSpacerPatch,
 	isAssistantMessageComponentLike,
 	isLeadingSpacer,
@@ -754,4 +755,76 @@ test("installToolMountHook: second install rebinds the callback (post-/reload ru
 test("installToolMountHook: fails open when the root has no addChild anywhere in its chain", () => {
 	assert.equal(installToolMountHook({ plain: true }, () => {}), false);
 	assert.equal(installToolMountHook(undefined, () => {}), false);
+});
+
+// ── installClickAwayClosePatch ───────────────────────────────────────────────
+
+function makeOverlayTui(hit: boolean) {
+	let renders = 0;
+	const tui = {
+		dispatchMouseToOverlay: (_event: unknown) => ({ hit }),
+		requestRender: () => {
+			renders++;
+		},
+		get renders() {
+			return renders;
+		},
+	};
+	return tui;
+}
+
+test("installClickAwayClosePatch: an outside press closes the open modal and is swallowed", () => {
+	const tui = makeOverlayTui(false);
+	let closed = 0;
+	assert.equal(installClickAwayClosePatch(tui, { isModalOpen: () => true, closeModal: () => closed++ }), true);
+	assert.deepEqual(tui.dispatchMouseToOverlay({ type: "press" }), { hit: true });
+	assert.equal(closed, 1);
+	assert.equal(tui.renders, 1);
+});
+
+test("installClickAwayClosePatch: clicks, inside presses, and a closed modal pass through", () => {
+	let closed = 0;
+	const deps = { isModalOpen: () => true, closeModal: () => closed++ };
+	const outside = makeOverlayTui(false);
+	installClickAwayClosePatch(outside, deps);
+	assert.deepEqual(outside.dispatchMouseToOverlay({ type: "click" }), { hit: false });
+	const inside = makeOverlayTui(true);
+	installClickAwayClosePatch(inside, deps);
+	assert.deepEqual(inside.dispatchMouseToOverlay({ type: "press" }), { hit: true });
+	const noModal = makeOverlayTui(false);
+	installClickAwayClosePatch(noModal, { isModalOpen: () => false, closeModal: () => closed++ });
+	assert.deepEqual(noModal.dispatchMouseToOverlay({ type: "press" }), { hit: false });
+	assert.equal(closed, 0);
+});
+
+test("installClickAwayClosePatch: a reinstall rebinds the callbacks without double-wrapping", () => {
+	const tui = makeOverlayTui(false);
+	let oldClosed = 0;
+	let newClosed = 0;
+	installClickAwayClosePatch(tui, { isModalOpen: () => true, closeModal: () => oldClosed++ });
+	const wrapped = tui.dispatchMouseToOverlay;
+	installClickAwayClosePatch(tui, { isModalOpen: () => true, closeModal: () => newClosed++ });
+	assert.equal(tui.dispatchMouseToOverlay, wrapped);
+	tui.dispatchMouseToOverlay({ type: "press" });
+	assert.equal(oldClosed, 0);
+	assert.equal(newClosed, 1);
+});
+
+test("installClickAwayClosePatch: works through pi's TUI reference Proxy (get/set traps, no defineProperty trap)", () => {
+	const real = makeOverlayTui(false);
+	const proxy = new Proxy({} as Record<PropertyKey, unknown>, {
+		get: (_t, p) => {
+			const v = Reflect.get(real, p, real);
+			return typeof v === "function" ? (...args: unknown[]) => Reflect.apply(v, real, args) : v;
+		},
+		set: (_t, p, v) => Reflect.set(real, p, v, real),
+		has: (_t, p) => Reflect.has(real, p),
+	});
+	let closed = 0;
+	installClickAwayClosePatch(proxy, { isModalOpen: () => true, closeModal: () => closed++ });
+	const wrapped = real.dispatchMouseToOverlay;
+	installClickAwayClosePatch(proxy, { isModalOpen: () => true, closeModal: () => closed++ });
+	assert.equal(real.dispatchMouseToOverlay, wrapped);
+	assert.deepEqual(real.dispatchMouseToOverlay({ type: "press" }), { hit: true });
+	assert.equal(closed, 1);
 });

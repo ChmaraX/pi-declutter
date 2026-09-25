@@ -949,14 +949,16 @@ export function installToolMountHook(root: unknown, onMount: (instance: object) 
 	return true;
 }
 
-// ── Click-away modal close (owner request; moved here from index.ts so ALL
-// runtime patches live under one guard contract) ────────────────────────────────
+// ── Click-away modal close ─────────────────────────────────────────────────────
 //
-// pi-tui routes a click that misses every overlay past the overlay layer
+// pi-tui routes a mouse event that misses every overlay past the overlay layer
 // (hit:false) straight into the transcript — an open modal never sees it.
 // Wrap the live TUI INSTANCE's dispatchMouseToOverlay (instance property only,
-// no prototype touched): an outside click while the modal is open closes it and
-// swallows the click so it cannot also toggle a row underneath. The callbacks
+// no prototype touched): an outside PRESS while the modal is open closes it and
+// is swallowed so it cannot also toggle a row underneath. It must be the press:
+// a press that lands on a mouse-aware component (card, editor, tool row) makes
+// that component the press target, and its click is then delivered to the
+// target directly, never through this method. The callbacks
 // live in instance slots that install always rewrites, so a /reload's fresh
 // runtime rebinds the existing wrap (same pattern as the other patches).
 // Fail-open: without the method, Esc/q keep working exactly as before.
@@ -977,8 +979,11 @@ export function installClickAwayClosePatch(tuiHandle: unknown, deps: ClickAwayDe
 		[CLICK_AWAY_CB]?: unknown;
 	} | undefined;
 	if (!tui || typeof tui.dispatchMouseToOverlay !== "function") return false;
+	// Plain assignment, not defineProperty: extensions get pi's TUI reference
+	// Proxy, which forwards get/set to the live TUI but has no defineProperty
+	// trap (a defined slot would land on the Proxy's dummy target, unreadable).
 	try {
-		Object.defineProperty(tui, CLICK_AWAY_CB, { value: deps, enumerable: false, configurable: true, writable: true });
+		tui[CLICK_AWAY_CB] = deps;
 	} catch {
 		return false;
 	}
@@ -989,14 +994,14 @@ export function installClickAwayClosePatch(tuiHandle: unknown, deps: ClickAwayDe
 			const out = original(event);
 			const type = (event as { type?: unknown } | undefined)?.type;
 			const cb = tui[CLICK_AWAY_CB] as ClickAwayDeps | undefined;
-			if (out && out.hit === false && type === "click" && cb?.isModalOpen()) {
+			if (out && out.hit === false && type === "press" && cb?.isModalOpen()) {
 				cb.closeModal();
 				tui.requestRender?.();
 				return { hit: true };
 			}
 			return out;
 		};
-		Object.defineProperty(tui, CLICK_AWAY_MARKER, { value: true, enumerable: false, configurable: true });
+		tui[CLICK_AWAY_MARKER] = true;
 	} catch {
 		return false;
 	}

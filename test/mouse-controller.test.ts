@@ -180,6 +180,31 @@ test("handleTerminalInput: a left-press packet dispatches through handleMouse an
 	assert.ok(dispatched);
 });
 
+test("handleTerminalInput: with the modal open, a press goes to the overlay layer, not the cards", () => {
+	let cardDispatched = false;
+	let overlayEvent: Record<string, unknown> | undefined;
+	const tui = makeFakeTui({
+		handleMouse: () => {
+			cardDispatched = true;
+			return { handled: true, render: true };
+		},
+	});
+	(tui as unknown as { dispatchMouseToOverlay: (e: Record<string, unknown>) => unknown }).dispatchMouseToOverlay = (e) => {
+		overlayEvent = e;
+		return { hit: false };
+	};
+	const runtime: MouseRuntime = { tui: tui as never };
+	const hover = makeHoverSpy();
+	const controller = new MouseController({ runtime, ...hover, isModalOpen: () => true });
+	const result = controller.handleTerminalInput("\x1b[<0;5;3M");
+	assert.deepEqual(result, { consume: true });
+	assert.equal(cardDispatched, false);
+	assert.equal(overlayEvent?.type, "press");
+	assert.equal(overlayEvent?.screenX, 4);
+	assert.equal(overlayEvent?.screenY, 2);
+	assert.equal(tui.renders, 1);
+});
+
 test("handleTerminalInput: a motion packet resolves hover without requiring a left press", () => {
 	const tui = makeFakeTui({
 		handleMouse: () => undefined, // no card under the cursor

@@ -526,6 +526,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		runtime,
 		commitHover: (cardId, nodeId) => commitHover(cardId, nodeId),
 		clearHover: () => clearHover(),
+		isModalOpen: () => modalController.isOpen(),
 	});
 
 	function captureCtx(ctx: ExtensionContext): void {
@@ -747,6 +748,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// rather than feigning completion (ticket 32 / 37).
 	function freezeEmptyCard(interrupted: boolean): void {
 		if (cardModel) {
+			// The last live snapshot may still hold the final answer as narration;
+			// a rebuild sweep would then hide the answer itself.
+			cardModel.entries = [];
 			cardModel.live = false;
 			if (interrupted) cardModel.interrupted = true;
 		}

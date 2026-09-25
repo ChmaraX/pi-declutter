@@ -34,6 +34,10 @@ export const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1003l\x1b[?1006l";
 // need to resolve a click row to a card); it is not on the base TUI interface.
 export type RegularTui = TUI & { captureRenderState?: () => TuiMainScreenRenderState };
 
+// Protected on the TUI base class; hit-tests the rendered overlays in
+// viewport coordinates (and carries the click-away close patch).
+type OverlayDispatch = (event: TuiMouseEvent) => { hit: boolean } | undefined;
+
 /** A live TUI handle holder — the same `runtime` object the capture widget fills. */
 export interface MouseRuntime {
 	tui: TUI | undefined;
@@ -50,6 +54,9 @@ export interface MouseControllerDeps {
 	/** Clear any hover highlight — called on teardown so a finalized/torn-down
 	 * session never keeps a stale row lit. */
 	clearHover(): void;
+	/** True while the floating modal is open: presses then go to the overlay
+	 * layer instead of the cards underneath. */
+	isModalOpen?(): boolean;
 }
 
 export class MouseController {
@@ -130,7 +137,10 @@ export class MouseController {
 		let lastMotion: MousePacket | undefined;
 		for (const packet of parsed.packets) {
 			if (isSgrLeftPress(packet)) {
-				if (this.resolveClickToCard(tui, packet)) toggled = true;
+				if (this.deps.isModalOpen?.()) {
+					this.dispatchPressToOverlay(tui, packet);
+					toggled = true;
+				} else if (this.resolveClickToCard(tui, packet)) toggled = true;
 			} else if (isSgrMotion(packet)) {
 				// Only the FINAL motion position matters for hover: a fast 1003 burst
 				// packs many motions per chunk, but resolving every one would dispatch
@@ -212,5 +222,28 @@ export class MouseController {
 		// The retained tree resolves y → component by summed child heights (Container
 		// mouseLayout), routing to the clicked card's MouseRegion → onCardMouse.
 		return Boolean(handleMouse.call(tui, event));
+	}
+
+	/** Route a press through the overlay layer, as fullscreen does natively, so
+	 * a press outside the modal reaches the click-away close. */
+	private dispatchPressToOverlay(tui: RegularTui, packet: MousePacket): void {
+		const dispatch = (tui as unknown as { dispatchMouseToOverlay?: OverlayDispatch }).dispatchMouseToOverlay;
+		if (typeof dispatch !== "function") return;
+		const x = Math.max(0, packet.col - 1);
+		const y = Math.max(0, packet.row - 1);
+		dispatch.call(tui, {
+			type: "press",
+			button: "left",
+			x,
+			y,
+			screenX: x,
+			screenY: y,
+			width: 0,
+			height: 0,
+			shift: (packet.code & 4) !== 0,
+			alt: (packet.code & 8) !== 0,
+			ctrl: (packet.code & 16) !== 0,
+			clickCount: 1,
+		});
 	}
 }

@@ -126,6 +126,8 @@ import { copyToClipboard, renderDiff } from "@earendil-works/pi-coding-agent";
 import {
 	Box,
 	type Component,
+	getCapabilities,
+	hyperlink,
 	MouseRegion,
 	Text,
 	type TUI,
@@ -173,7 +175,7 @@ import { PatchController } from "./patch-controller.ts";
 import { NarrationController } from "./narration-controller.ts";
 import { MouseController } from "./mouse-controller.ts";
 import { bodyKindOf, bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
-import { withStyledBody } from "./modal-body.ts";
+import { type RichBodyDeps, withStyledBody } from "./modal-body.ts";
 
 import { OutputModal } from "./modal-view.ts";
 import { ModalController } from "./modal-controller.ts";
@@ -302,6 +304,16 @@ function nodeFs(): typeof import("node:fs") {
 	return require("node:fs") as typeof import("node:fs");
 }
 
+/** Same require-for-jiti-parity reason as nodeFs(); used to turn a file path
+ * mentioned in tool output into a file:// URL. */
+function nodePathModules(): { os: typeof import("node:os"); path: typeof import("node:path"); url: typeof import("node:url") } {
+	return {
+		os: require("node:os") as typeof import("node:os"),
+		path: require("node:path") as typeof import("node:path"),
+		url: require("node:url") as typeof import("node:url"),
+	};
+}
+
 /**
  * Resolve the full output text for a member's modal (ticket 35). Prefers the
  * bash/powershell temp file (`fullOutputPath`) that holds the UNTRUNCATED output
@@ -332,6 +344,33 @@ function readFullOutput(item: ShapeItem): string | undefined {
 		}
 	}
 	return item.fullOutput;
+}
+
+/**
+ * The pi renderers the modal decorates its body with. Hyperlinks are emitted
+ * only when the terminal is known to support OSC 8 — a terminal that swallows
+ * them would swallow the URL text with it — and a file path links only when it
+ * resolves to a file that exists, so prose is never turned into dead links.
+ */
+function richBodyDeps(): RichBodyDeps {
+	const linkable = getCapabilities().hyperlinks;
+	return {
+		renderDiff: (diff) => renderDiff(diff),
+		link: linkable ? (text, url) => hyperlink(text, url) : undefined,
+		fileUrl: linkable
+			? (target) => {
+					try {
+						const { os, path, url } = nodePathModules();
+						const expanded = target.startsWith("~") ? path.join(os.homedir(), target.slice(1)) : target;
+						const absolute = path.resolve(process.cwd(), expanded);
+						if (!nodeFs().existsSync(absolute)) return undefined;
+						return url.pathToFileURL(absolute).href;
+					} catch {
+						return undefined;
+					}
+				}
+			: undefined,
+	};
 }
 
 // ── Settled activity card ────────────────────────────────────────────────
@@ -855,7 +894,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		makeModal: (content, theme, done, onCopy, matchesToolsExpand, onToolsExpand) =>
 			new OutputModal(content, theme as Theme, done, onCopy, matchesToolsExpand, onToolsExpand),
 		// pi's own renderers, so a modal matches the colours the native tool rows use.
-		enrich: (content, item) => withStyledBody(content, item, { renderDiff: (diff) => renderDiff(diff) }),
+		enrich: (content, item) => withStyledBody(content, item, richBodyDeps()),
 	});
 
 	function onCardMouse(id: string, event: TuiMouseEvent): TuiMouseEventResult | undefined {

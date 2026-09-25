@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ShapeItem } from "../src/card-shape.ts";
-import { withStyledBody } from "../src/modal-body.ts";
+import { linkifyLine, type RichBodyDeps, withStyledBody } from "../src/modal-body.ts";
 import { itemModalContent } from "../src/modal.ts";
 
 /** Stand-in for pi's renderDiff: marks every row so placement is visible. */
@@ -17,6 +17,13 @@ const fakeRenderDiff = (diff: string): string =>
 		.split("\n")
 		.map((line) => `[${line}]`)
 		.join("\n");
+
+/** Stand-ins for pi-tui's hyperlink() and a filesystem-backed path resolver. */
+const linkDeps: RichBodyDeps = {
+	renderDiff: fakeRenderDiff,
+	link: (text, url) => `{${url}|${text}}`,
+	fileUrl: (p) => (p.endsWith(".ts") ? `file://${p}` : undefined),
+};
 
 function editItem(overrides: Partial<ShapeItem> = {}): ShapeItem {
 	return {
@@ -78,8 +85,43 @@ test("withStyledBody keeps the plain body when the renderer changes the row coun
 	assert.equal(threw.bodyStyled, undefined);
 });
 
+test("linkifyLine links URLs and resolvable file paths, leaving prose alone", () => {
+	assert.equal(
+		linkifyLine("see https://example.com/a for /tmp/x.ts and/or nothing", linkDeps),
+		"see {https://example.com/a|https://example.com/a} for {file:///tmp/x.ts|/tmp/x.ts} and/or nothing",
+	);
+});
+
+test("linkifyLine keeps sentence punctuation outside the link", () => {
+	assert.equal(linkifyLine("open https://example.com/a.", linkDeps), "open {https://example.com/a|https://example.com/a}.");
+	assert.equal(linkifyLine("edited /tmp/x.ts:42", linkDeps), "edited {file:///tmp/x.ts|/tmp/x.ts}:42");
+});
+
+test("linkifyLine leaves a path that does not resolve as plain text", () => {
+	assert.equal(linkifyLine("missing /tmp/gone.txt here", linkDeps), "missing /tmp/gone.txt here");
+});
+
+test("without hyperlink support every line is left raw for the terminal to detect", () => {
+	const line = "see https://example.com/a and /tmp/x.ts";
+	assert.equal(linkifyLine(line, { renderDiff: fakeRenderDiff }), line);
+	const item = editItem({ diff: undefined, fullOutput: line });
+	const content = withStyledBody(itemModalContent(item, line), item, { renderDiff: fakeRenderDiff });
+	assert.equal(content.bodyStyled, undefined);
+});
+
+test("links and a rendered diff coexist in one styled body, and copy stays plain", () => {
+	const item = editItem({ fullOutput: "wrote /tmp/x.ts" });
+	const content = withStyledBody(itemModalContent(item, "wrote /tmp/x.ts"), item, linkDeps);
+	assert.ok(content.bodyStyled);
+	assert.equal(content.bodyStyled?.length, content.body.length);
+	assert.deepEqual(content.bodyStyled?.slice(1, 4), ["[ 1 const a = 1;]", "[-2 const b = 2;]", "[+2 const b = 42;]"]);
+	assert.ok(content.bodyStyled?.some((row) => row.includes("{file:///tmp/x.ts|/tmp/x.ts}")));
+	assert.ok(content.copyText.includes("wrote /tmp/x.ts"));
+	assert.equal(content.copyText.includes("{file://"), false);
+});
+
 test("a command modal ignores a diff (its body is the shell transcript)", () => {
-	const item = editItem({ command: "git diff", glyph: "$" });
+	const item = editItem({ command: "git diff", glyph: "$", fullOutput: "output" });
 	const content = withStyledBody(itemModalContent(item, "output"), item, { renderDiff: fakeRenderDiff });
 	assert.equal(content.caption, "Shell");
 	assert.equal(content.bodyStyled, undefined);

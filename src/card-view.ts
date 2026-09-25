@@ -16,7 +16,7 @@ import {
 	spinnerFrame,
 } from "./card-shape.ts";
 import { type CardModel, type PersistedCardData, staleCardShapeModel } from "./card-model.ts";
-import { styleLine } from "./styling.ts";
+import { type RowWrap, styleLineRows } from "./styling.ts";
 
 // The card renders inside a Box with vertical padding 1, so its first content
 // line (the header) sits at rendered index 1. A click's card-local y maps to a
@@ -167,8 +167,12 @@ export interface CardBox {
 export interface CardRenderPrimitives {
 	/** The card's outer box: padding 1/1, background painted via `bg`. */
 	makeBox(bg: (text: string) => string): CardBox;
-	/** One already-themed line, ready to wrap at the box's content width. */
+	/** One already-themed line (possibly several pre-wrapped rows). */
 	makeLine(content: string): CardLine;
+	/** ANSI-aware wrap to a display width, used for hanging-indent rows. */
+	wrap: RowWrap;
+	/** Display width of plain text (wide glyphs count double). */
+	measure(text: string): number;
 }
 
 export class ActivityCard implements Component {
@@ -269,7 +273,10 @@ export class ActivityCard implements Component {
 		const contentWidth = Math.max(1, width - CARD_BOX_PADDING_X * 2);
 		const heights: number[] = [];
 		for (const line of shaped.lines) {
-			const text = this.primitives.makeLine(styleLine(theme, line));
+			// Pre-wrapped with a hanging indent, so continuation rows line up under
+			// the text after the row's marker instead of the card's left edge.
+			const rows = styleLineRows(theme, line, contentWidth, this.primitives.wrap, this.primitives.measure);
+			const text = this.primitives.makeLine(rows.join("\n"));
 			heights.push(text.render(contentWidth).length);
 			box.addChild(text);
 		}

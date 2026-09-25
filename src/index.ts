@@ -133,6 +133,8 @@ import {
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
+	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import {
@@ -204,6 +206,8 @@ import {
 const cardRenderPrimitives: CardRenderPrimitives = {
 	makeBox: (bg) => new Box(1, 1, bg),
 	makeLine: (content) => new Text(content, 0, 0),
+	wrap: wrapTextWithAnsi,
+	measure: visibleWidth,
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────

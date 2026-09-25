@@ -65,8 +65,10 @@ function fakePrimitives(): { primitives: CardRenderPrimitives; renderedLines: st
 		},
 		makeLine: (content: string): CardLine => {
 			renderedLines.push(content);
-			return { render: () => [content] };
+			return { render: () => content.split("\n") };
 		},
+		wrap: (text: string) => [text],
+		measure: (text: string) => [...text].length,
 	};
 	return { primitives, renderedLines };
 }

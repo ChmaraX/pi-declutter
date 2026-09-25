@@ -181,11 +181,18 @@ export interface ShapeItem {
 	 * MCP/extension tool modals opened with nothing in them). Undefined for
 	 * command tools (the `$ cmd` line already IS the input) and empty args. */
 	input?: string;
+	/** Display diff of a file edit (pi's `+12 line` format), captured from the
+	 * tool result. Drives the modal's Diff section. Undefined for every tool that
+	 * reports no diff. */
+	diff?: string;
 }
 
 /** Character cap for a captured Input JSON — keeps persisted card data bounded
  * (huge tool args like whole file bodies get end-truncated). */
 export const MAX_INPUT_CAPTURE = 4096;
+
+/** Character cap for a captured diff — same bounding reason as the Input JSON. */
+export const MAX_DIFF_CAPTURE = 16384;
 
 /**
  * Pretty-print a tool call's arguments for the modal's Input section.

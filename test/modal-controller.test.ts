@@ -85,13 +85,19 @@ function fakeItem(): ShapeItem {
 	};
 }
 
-function makeController(model: CardModel | undefined) {
+type Enrich = (
+	content: import("../src/modal.ts").ModalContent,
+	item?: ShapeItem,
+) => import("../src/modal.ts").ModalContent;
+
+function makeController(model: CardModel | undefined, enrich?: Enrich) {
 	const { ctx, opens, statuses, toolsExpandedChanges } = makeFakeCtx();
 	let copied: string | undefined;
 	let matchesToolsExpand: ((data: string) => boolean) | undefined;
 	let onToolsExpand: (() => void) | undefined;
 	const contents: import("../src/modal.ts").ModalContent[] = [];
 	const controller = new ModalController({
+		enrich,
 		getUiCtx: () => ctx as never,
 		hasLiveUI: (c) => (c as { mode: string }).mode === "tui",
 		getModel: () => model,
@@ -118,6 +124,28 @@ function makeController(model: CardModel | undefined) {
 		toggleToolsExpand: () => onToolsExpand?.(),
 	};
 }
+
+test("ModalController: the injected enricher decorates the content the modal renders", () => {
+	const seen: Array<string | undefined> = [];
+	const { controller, contents } = makeController(groupModel(fakeItem()), (content, item) => {
+		seen.push(item?.label);
+		return { ...content, bodyStyled: content.body.map((l) => `<${l}>`) };
+	});
+	controller.openMemberModal("card", 0, 0);
+	assert.deepEqual(seen, ["Ran ls"]);
+	assert.deepEqual(contents[0].bodyStyled, contents[0].body.map((l) => `<${l}>`));
+	// Styling never touches what `c` copies.
+	assert.equal(contents[0].copyText.includes("<"), false);
+});
+
+test("ModalController: a failing enricher still opens the plain modal", () => {
+	const { controller, opens, contents } = makeController(groupModel(fakeItem()), () => {
+		throw new Error("renderer blew up");
+	});
+	controller.openMemberModal("card", 0, 0);
+	assert.equal(opens.length, 1);
+	assert.equal(contents[0].bodyStyled, undefined);
+});
 
 test("ModalController: opens a member modal", () => {
 	const { controller, opens } = makeController(groupModel(fakeItem()));

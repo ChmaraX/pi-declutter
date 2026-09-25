@@ -24,6 +24,11 @@
 
 export type Bucket = "files" | "searches" | "commands" | "tools";
 
+/** How a tool's modal body is displayed when the data for it is there:
+ * "diff" renders the captured display diff, "code" syntax-highlights the file
+ * body. A tool without a body kind (and any missing data) keeps plain text. */
+export type BodyKind = "diff" | "code";
+
 export interface ToolCallLike {
 	name: string;
 	arguments?: Record<string, unknown>;
@@ -49,11 +54,13 @@ export interface ToolTraits {
 	 * already says everything useful, and file bodies would be huge. Absent
 	 * (falsy) for everything else. */
 	preview?: boolean;
+	/** Richer modal body this tool's data supports; absent means plain text. */
+	body?: BodyKind;
 }
 
 const TOOL_TRAITS: Record<string, ToolTraits> = {
 	read: { bucket: "files", glyph: "▤" },
-	edit: { bucket: "files", glyph: "✎" },
+	edit: { bucket: "files", glyph: "✎", body: "diff" },
 	write: { bucket: "files", glyph: "✎" },
 	grep: { bucket: "searches", glyph: "⌕", preview: true },
 	find: { bucket: "searches", glyph: "≡", preview: true },
@@ -83,6 +90,12 @@ export function isCommandTool(name: string | undefined): boolean {
  * everything else, including unknown/MCP tools. */
 export function isPreviewTool(name: string | undefined): boolean {
 	return Boolean(name && TOOL_TRAITS[name]?.preview);
+}
+
+/** Richer modal body a tool's data supports; undefined for unknown/MCP tools,
+ * which keep the plain body. */
+export function bodyKindOf(name: string | undefined): BodyKind | undefined {
+	return name ? TOOL_TRAITS[name]?.body : undefined;
 }
 
 // Bucket display order (also the order used in both outputs).

@@ -44,6 +44,9 @@ export interface ToolCall {
 	/** bash/powershell temp file holding the untruncated output when it truncated
 	 * (BashToolDetails.fullOutputPath); read lazily when the modal opens. */
 	fullOutputPath?: string;
+	/** Display diff reported by a file-editing tool (EditToolDetails.diff),
+	 * bounded at capture. */
+	diff?: string;
 	/** Pre-computed member label for SYNTHETIC calls (a provider tool step
 	 * reconstructed from a thinking-channel dump, span-classify.ts) — there are
 	 * no real args for describeCall to describe. */
@@ -85,6 +88,7 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		exitCode: call.exitCode,
 		fullOutput: call.fullOutput,
 		fullOutputPath: call.fullOutputPath,
+		diff: call.diff,
 		// The `$ cmd` line IS a command tool's input; everything else gets the
 		// pretty-printed args so the modal is never empty.
 		input: command === undefined ? formatCallInput(call.arguments) : undefined,

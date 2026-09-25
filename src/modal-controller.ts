@@ -52,6 +52,9 @@ export interface ModalControllerDeps {
 		matchesToolsExpand: (data: string) => boolean,
 		onToolsExpand: () => void,
 	): ModalComponent;
+	/** Add styled display rows to a modal's content (coloured diff, highlighted
+	 * code, markdown). Optional: without it every modal renders plain text. */
+	enrich?(content: ModalContent, item?: ShapeItem): ModalContent;
 }
 
 export class ModalController {
@@ -142,6 +145,17 @@ export class ModalController {
 			});
 	}
 
+	/** Styled rows are best-effort decoration: a failing enricher must never cost
+	 * the user the modal itself. */
+	private enrich(content: ModalContent, item?: ShapeItem): ModalContent {
+		if (!this.deps.enrich) return content;
+		try {
+			return this.deps.enrich(content, item);
+		} catch {
+			return content;
+		}
+	}
+
 	private copyModal(content: ModalContent, modal: ModalComponent | undefined): void {
 		void this.deps.copyToClipboard(content.copyText).then(
 			() => {
@@ -168,7 +182,7 @@ export class ModalController {
 		const item = entry.group.items[itemIndex];
 		if (!item) return;
 		const full = this.deps.readFullOutput(item);
-		this.showModal(itemModalContent(item, full));
+		this.showModal(this.enrich(itemModalContent(item, full), item));
 	}
 
 	openThoughtModal(cardId: string, entryIndex: number): void {
@@ -177,13 +191,13 @@ export class ModalController {
 		// Pass the raw untruncated span text so the modal shows the full reasoning,
 		// not the compact previewLines-capped `tail` (that stays the card row's
 		// glance view). Mirrors the tool-row fullText pattern.
-		this.showModal(thoughtModalContent(entry.thought, entry.thought.fullText));
+		this.showModal(this.enrich(thoughtModalContent(entry.thought, entry.thought.fullText)));
 	}
 
 	openNarrationModal(cardId: string, entryIndex: number): void {
 		const entry = this.entryAt(cardId, entryIndex);
 		if (!entry || entry.kind !== "narration") return;
-		this.showModal(narrationModalContent(entry.narration));
+		this.showModal(this.enrich(narrationModalContent(entry.narration)));
 	}
 
 	/** Force-close and clear the copy-status timer (called at session_shutdown). */

@@ -122,7 +122,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { copyToClipboard } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, renderDiff } from "@earendil-works/pi-coding-agent";
 import {
 	Box,
 	type Component,
@@ -140,6 +140,7 @@ import {
 	expandRowMapToVisual,
 	groupHasMembersToggle,
 	hoveredNodeAt,
+	MAX_DIFF_CAPTURE,
 	narrationTexts,
 	parseNodeId,
 	previewLines,
@@ -171,7 +172,8 @@ import {
 import { PatchController } from "./patch-controller.ts";
 import { NarrationController } from "./narration-controller.ts";
 import { MouseController } from "./mouse-controller.ts";
-import { bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
+import { bodyKindOf, bucketCountsText, isCommandTool, isPreviewTool } from "./labels.ts";
+import { withStyledBody } from "./modal-body.ts";
 
 import { OutputModal } from "./modal-view.ts";
 import { ModalController } from "./modal-controller.ts";
@@ -852,6 +854,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		requestRender: () => runtime.tui?.requestRender(),
 		makeModal: (content, theme, done, onCopy, matchesToolsExpand, onToolsExpand) =>
 			new OutputModal(content, theme as Theme, done, onCopy, matchesToolsExpand, onToolsExpand),
+		// pi's own renderers, so a modal matches the colours the native tool rows use.
+		enrich: (content, item) => withStyledBody(content, item, { renderDiff: (diff) => renderDiff(diff) }),
 	});
 
 	function onCardMouse(id: string, event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -1461,6 +1465,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (isCommandTool(event.toolName) && event.details) {
 			const path = (event.details as { fullOutputPath?: unknown }).fullOutputPath;
 			if (typeof path === "string" && path.length > 0) call.fullOutputPath = path;
+		}
+		// A file edit reports its diff only here (it is absent from the result text),
+		// so the modal's Diff section is fed from the typed details.
+		if (bodyKindOf(event.toolName) === "diff" && event.details) {
+			const diff = (event.details as { diff?: unknown }).diff;
+			if (typeof diff === "string" && diff.length > 0) call.diff = diff.slice(0, MAX_DIFF_CAPTURE);
 		}
 	});
 

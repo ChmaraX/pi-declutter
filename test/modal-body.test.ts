@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ShapeItem } from "../src/card-shape.ts";
-import { linkifyLine, type RichBodyDeps, withStyledBody } from "../src/modal-body.ts";
+import { MAX_HIGHLIGHT_ROWS, linkifyLine, type RichBodyDeps, withStyledBody } from "../src/modal-body.ts";
 import { itemModalContent } from "../src/modal.ts";
 
 /** Stand-in for pi's renderDiff: marks every row so placement is visible. */
@@ -24,6 +24,27 @@ const linkDeps: RichBodyDeps = {
 	link: (text, url) => `{${url}|${text}}`,
 	fileUrl: (p) => (p.endsWith(".ts") ? `file://${p}` : undefined),
 };
+
+/** Stand-in for pi's highlightCode/getLanguageFromPath pair. */
+const codeDeps: RichBodyDeps = {
+	renderDiff: fakeRenderDiff,
+	highlight: (code) => code.split("\n").map((line) => `«${line}»`),
+	languageOf: (p) => (p.endsWith(".ts") ? "typescript" : undefined),
+};
+
+function readItem(overrides: Partial<ShapeItem> = {}): ShapeItem {
+	return {
+		label: "Read src/x.ts",
+		durMs: 40,
+		isError: false,
+		running: false,
+		preview: [],
+		glyph: "▤",
+		input: '{"path":"src/x.ts"}',
+		path: "src/x.ts",
+		...overrides,
+	};
+}
 
 function editItem(overrides: Partial<ShapeItem> = {}): ShapeItem {
 	return {
@@ -118,6 +139,58 @@ test("links and a rendered diff coexist in one styled body, and copy stays plain
 	assert.ok(content.bodyStyled?.some((row) => row.includes("{file:///tmp/x.ts|/tmp/x.ts}")));
 	assert.ok(content.copyText.includes("wrote /tmp/x.ts"));
 	assert.equal(content.copyText.includes("{file://"), false);
+});
+
+test("a read modal highlights the file text and keeps its line-number gutter", () => {
+	const item = readItem();
+	const output = "     1\tconst a = 1;\n     2\tconst b = 2;";
+	const content = withStyledBody(itemModalContent(item, output), item, codeDeps);
+	const start = content.body.indexOf("Output:") + 1;
+	assert.deepEqual(content.bodyStyled?.slice(start), ["     1\t«const a = 1;»", "     2\t«const b = 2;»"]);
+	// Everything before the file text stays plain, and copy is untouched.
+	assert.deepEqual(content.bodyStyled?.slice(0, start), content.body.slice(0, start));
+	assert.ok(content.copyText.includes("     1\tconst a = 1;"));
+	assert.equal(content.copyText.includes("«"), false);
+});
+
+test("a write modal shows the written file as a highlighted Content section", () => {
+	const item = readItem({
+		label: "Wrote src/x.ts",
+		glyph: "✎",
+		input: undefined,
+		content: "const a = 1;\nconst b = 2;",
+	});
+	const plain = itemModalContent(item, "Successfully wrote to src/x.ts");
+	assert.equal(plain.caption, "Content");
+	assert.deepEqual(plain.body.slice(0, 3), ["Content:", "const a = 1;", "const b = 2;"]);
+	const content = withStyledBody(plain, item, codeDeps);
+	assert.deepEqual(content.bodyStyled?.slice(1, 3), ["«const a = 1;»", "«const b = 2;»"]);
+	// The trailing output row is not file text, so it stays plain.
+	assert.equal(content.bodyStyled?.[content.body.length - 1], "Successfully wrote to src/x.ts");
+});
+
+test("an unknown file type or an oversized file keeps the plain body", () => {
+	const unknown = readItem({ path: "notes.bin", input: undefined, content: "binary-ish" });
+	assert.equal(withStyledBody(itemModalContent(unknown, "done"), unknown, codeDeps).bodyStyled, undefined);
+	const huge = readItem({
+		input: undefined,
+		content: Array.from({ length: MAX_HIGHLIGHT_ROWS + 1 }, (_, i) => `line ${i}`).join("\n"),
+	});
+	assert.equal(withStyledBody(itemModalContent(huge, "done"), huge, codeDeps).bodyStyled, undefined);
+});
+
+test("a highlighter that throws or drops rows leaves the file text plain", () => {
+	const item = readItem({ input: undefined, content: "const a = 1;\nconst b = 2;" });
+	const plain = itemModalContent(item, "done");
+	const threw = withStyledBody(plain, item, {
+		...codeDeps,
+		highlight: () => {
+			throw new Error("no theme");
+		},
+	});
+	assert.equal(threw.bodyStyled, undefined);
+	const dropped = withStyledBody(plain, item, { ...codeDeps, highlight: (code) => [code] });
+	assert.equal(dropped.bodyStyled, undefined);
 });
 
 test("a command modal ignores a diff (its body is the shell transcript)", () => {

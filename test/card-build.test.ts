@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildCardEntries, type CardEntryBuild, settleAction, type ToolCall, toShapeItem } from "../src/card-build.ts";
+import { MAX_CONTENT_CAPTURE } from "../src/card-shape.ts";
 import type { Entry } from "../src/grouping.ts";
 
 function call(over: Partial<ToolCall> & { toolCallId: string; name: string }): ToolCall {
@@ -188,4 +189,28 @@ test("toShapeItem: labelOverride wins over describeCall and suppresses the args 
 	assert.equal(item.glyph, "$"); // family name drives the glyph
 	assert.equal(item.command, undefined); // no real args — no $ line duplication
 	assert.equal(item.fullOutput, "Checked 8 files in 13ms.");
+});
+
+test("toShapeItem: a file tool carries its path, and a write carries the text instead of args JSON", () => {
+	const read = toShapeItem(call({ toolCallId: "r", name: "read", arguments: { path: "src/x.ts", limit: 20 } }));
+	assert.equal(read.path, "src/x.ts");
+	assert.equal(read.content, undefined);
+	assert.ok(read.input?.includes("src/x.ts"));
+
+	const write = toShapeItem(call({ toolCallId: "w", name: "write", arguments: { path: "src/x.ts", content: "a\nb" } }));
+	assert.equal(write.path, "src/x.ts");
+	assert.equal(write.content, "a\nb");
+	assert.equal(write.input, undefined);
+
+	// A tool with no body kind keeps the plain args JSON and no path.
+	const mcp = toShapeItem(call({ toolCallId: "m", name: "linear_get_issue", arguments: { path: "nope" } }));
+	assert.equal(mcp.path, undefined);
+	assert.equal(mcp.content, undefined);
+});
+
+test("toShapeItem: an oversized written file is capped", () => {
+	const content = "x".repeat(MAX_CONTENT_CAPTURE + 50);
+	const item = toShapeItem(call({ toolCallId: "w", name: "write", arguments: { path: "a.ts", content } }));
+	assert.equal(item.content?.length, MAX_CONTENT_CAPTURE);
+	assert.ok(item.content?.endsWith("\u2026"));
 });

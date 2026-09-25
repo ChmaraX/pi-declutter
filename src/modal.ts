@@ -47,6 +47,12 @@ export function handleToolsExpandInput(
  * exactly the diff rows. */
 export const DIFF_HEADING = "Diff:";
 
+/** Heading of the modal's written-file section. */
+export const CONTENT_HEADING = "Content:";
+
+/** Heading the modal's output section starts with. */
+export const OUTPUT_HEADING = "Output:";
+
 /** Compose the modal content for a tool member row. `fullText`, when provided,
  * is the untruncated output (from the bash fullOutputPath or the raised capture
  * cap); otherwise the shaped preview tail is used. A command tool leads its body
@@ -58,9 +64,18 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 	const badge = itemBadge(item);
 	const isCommand = item.command !== undefined;
 	const diff = isCommand ? undefined : item.diff;
-	// "Diff" when the body leads with a diff, "Call" when it is sectioned
+	const written = isCommand || diff !== undefined ? undefined : item.content;
+	// "Diff"/"Content" when the body leads with one, "Call" when it is sectioned
 	// Input/Output, plain "Output" otherwise.
-	const caption = isCommand ? "Shell" : diff !== undefined ? "Diff" : item.input !== undefined ? "Call" : "Output";
+	const caption = isCommand
+		? "Shell"
+		: diff !== undefined
+			? "Diff"
+			: written !== undefined
+				? "Content"
+				: item.input !== undefined
+					? "Call"
+					: "Output";
 	const raw = fullText !== undefined && fullText.length > 0 ? fullText : item.preview.join("\n");
 	const splitLines = raw.length > 0 ? raw.split("\n") : [];
 	// Drop trailing blanks and the duplicated "Command exited with code N" line
@@ -73,13 +88,17 @@ export function itemModalContent(item: ShapeItem, fullText?: string): ModalConte
 	// came to read, so it replaces the Input section rather than joining it.
 	if (diff !== undefined) {
 		body.push(DIFF_HEADING, ...diff.split("\n"));
-		body.push("", "Output:");
+		body.push("", OUTPUT_HEADING);
+	} else if (written !== undefined) {
+		body.push(CONTENT_HEADING, ...written.split("\n"));
+		body.push("", OUTPUT_HEADING);
 	} else if (!isCommand && item.input !== undefined) {
 		body.push("Input:", ...item.input.split("\n"));
-		body.push("", "Output:");
+		body.push("", OUTPUT_HEADING);
 	}
 	if (rawLines.length > 0) body.push(...rawLines);
-	else if (!isCommand && (diff !== undefined || item.input !== undefined)) body.push("(no output captured)");
+	else if (!isCommand && (diff !== undefined || written !== undefined || item.input !== undefined))
+		body.push("(no output captured)");
 	// Copy the command + output together for a command tool, or the full sectioned
 	// body otherwise.
 	const copyText = isCommand ? [`$ ${item.command}`, ...rawLines].join("\n") : body.join("\n");

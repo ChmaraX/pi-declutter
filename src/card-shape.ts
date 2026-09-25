@@ -185,6 +185,11 @@ export interface ShapeItem {
 	 * tool result. Drives the modal's Diff section. Undefined for every tool that
 	 * reports no diff. */
 	diff?: string;
+	/** File the call targeted, for picking a syntax-highlighting language. */
+	path?: string;
+	/** Text a write call put in the file, bounded at capture. Drives the modal's
+	 * Content section. */
+	content?: string;
 }
 
 /** Character cap for a captured Input JSON — keeps persisted card data bounded
@@ -193,6 +198,9 @@ export const MAX_INPUT_CAPTURE = 4096;
 
 /** Character cap for a captured diff — same bounding reason as the Input JSON. */
 export const MAX_DIFF_CAPTURE = 16384;
+
+/** Character cap for captured file content shown in a modal's Content section. */
+export const MAX_CONTENT_CAPTURE = 16384;
 
 /**
  * Pretty-print a tool call's arguments for the modal's Input section.

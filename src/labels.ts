@@ -59,9 +59,9 @@ export interface ToolTraits {
 }
 
 const TOOL_TRAITS: Record<string, ToolTraits> = {
-	read: { bucket: "files", glyph: "▤" },
+	read: { bucket: "files", glyph: "▤", body: "code" },
 	edit: { bucket: "files", glyph: "✎", body: "diff" },
-	write: { bucket: "files", glyph: "✎" },
+	write: { bucket: "files", glyph: "✎", body: "code" },
 	grep: { bucket: "searches", glyph: "⌕", preview: true },
 	find: { bucket: "searches", glyph: "≡", preview: true },
 	ls: { bucket: "searches", glyph: "≡", preview: true },

@@ -122,7 +122,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { copyToClipboard, renderDiff } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, getLanguageFromPath, highlightCode, renderDiff } from "@earendil-works/pi-coding-agent";
 import {
 	Box,
 	type Component,
@@ -356,6 +356,8 @@ function richBodyDeps(): RichBodyDeps {
 	const linkable = getCapabilities().hyperlinks;
 	return {
 		renderDiff: (diff) => renderDiff(diff),
+		highlight: (code, lang) => highlightCode(code, lang),
+		languageOf: (path) => getLanguageFromPath(path),
 		link: linkable ? (text, url) => hyperlink(text, url) : undefined,
 		fileUrl: linkable
 			? (target) => {

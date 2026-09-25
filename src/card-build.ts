@@ -6,6 +6,7 @@ import {
 	coalesceThoughts,
 	deriveNarrationSummary,
 	formatCallInput,
+	MAX_CONTENT_CAPTURE,
 	type ShapeGroup,
 	type ShapeItem,
 	type ShapeNarration,
@@ -16,6 +17,7 @@ import type { Entry } from "./grouping.ts";
 import {
 	argsGist,
 	asString,
+	bodyKindOf,
 	bucketCountsText,
 	describeCall,
 	describeCallIsGeneric,
@@ -77,6 +79,11 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		if (gist) label = `${label} — ${gist}`;
 	}
 	const command = isCommandTool(call.name) ? asString(call.arguments.command) : undefined;
+	// A file tool's own arguments say which file it touched and, for a write, what
+	// went into it: the modal syntax-highlights both against that path.
+	const isCode = bodyKindOf(call.name) === "code";
+	const path = isCode ? (asString(call.arguments.path) ?? asString(call.arguments.file_path)) : undefined;
+	const written = isCode ? asString(call.arguments.content) : undefined;
 	return {
 		label,
 		durMs,
@@ -89,9 +96,15 @@ export function toShapeItem(call: ToolCall): ShapeItem {
 		fullOutput: call.fullOutput,
 		fullOutputPath: call.fullOutputPath,
 		diff: call.diff,
-		// The `$ cmd` line IS a command tool's input; everything else gets the
-		// pretty-printed args so the modal is never empty.
-		input: command === undefined ? formatCallInput(call.arguments) : undefined,
+		path,
+		content:
+			written !== undefined && written.length > MAX_CONTENT_CAPTURE
+				? `${written.slice(0, MAX_CONTENT_CAPTURE - 1)}\u2026`
+				: written,
+		// The `$ cmd` line IS a command tool's input, and a written file body is
+		// shown as itself; everything else gets the pretty-printed args so the modal
+		// is never empty.
+		input: command === undefined && written === undefined ? formatCallInput(call.arguments) : undefined,
 	};
 }
 

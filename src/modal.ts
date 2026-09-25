@@ -26,6 +26,10 @@ export interface ModalContent {
 	 * diff, highlighted code or markdown. Same logical order as `body`; absent
 	 * when the body has no richer form. Never used for `copyText`. */
 	bodyStyled?: string[];
+	/** Prose to render as Markdown at the modal's current width, replacing the
+	 * plain body on screen. Set for the narration and thinking modals, whose
+	 * content is written as Markdown. */
+	markdown?: string;
 	/** The exact text `c` copies — the untruncated raw body. */
 	copyText: string;
 	/** True when the body was loaded from a truncated capture's full-output file. */
@@ -121,6 +125,7 @@ export function narrationModalContent(narration: ShapeNarration): ModalContent {
 		title: narration.summary,
 		caption: "Narration",
 		body,
+		markdown: narration.text,
 		copyText: narration.text,
 		full: true,
 	};
@@ -135,6 +140,7 @@ export function thoughtModalContent(thought: ShapeThought, fullText?: string): M
 		title: `Thought ${formatDuration(thought.ms)}${summary}`,
 		caption: "Thinking",
 		body,
+		markdown: raw,
 		copyText: raw,
 		full: false,
 	};

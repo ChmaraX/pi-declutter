@@ -8,8 +8,8 @@
 // Pure of any activityFeed() closure state: the content, theme, and the
 // done/copy callbacks are all injected by the ModalController that owns it.
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Focusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { type Focusable, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
 import { clampScrollTop, handleToolsExpandInput, type ModalContent, scrollHint, visibleSlice, wrapBody } from "./modal.ts";
 import { styleTone } from "./styling.ts";
@@ -47,6 +47,8 @@ export class OutputModal implements Focusable {
 	 * width change rather than every frame. */
 	private wrappedBody: string[] = [];
 	private wrappedForWidth = -1;
+	/** True when the rows the last wrap produced carry their own colours. */
+	private bodyIsStyled = false;
 	/** Content width the body was last wrapped/scrolled against, so handleInput's
 	 * paging math uses the same total row count render() produced. */
 	private lastInnerContentWidth = 78;
@@ -96,12 +98,27 @@ export class OutputModal implements Focusable {
 		this.termWidth = width;
 	}
 
+	/** Markdown prose laid out for the current width, or undefined when this modal
+	 * has none (or pi could not render it, in which case the plain body stands). */
+	private markdownRows(innerContentWidth: number): string[] | undefined {
+		if (this.content.markdown === undefined) return undefined;
+		try {
+			return new Markdown(this.content.markdown, 0, 0, getMarkdownTheme()).render(innerContentWidth);
+		} catch {
+			return undefined;
+		}
+	}
+
 	/** The body wrapped to `innerContentWidth`, memoized per width. Wrapping goes
 	 * through pi-tui so a styled row's ANSI/OSC 8 state is reopened on every
 	 * continuation row instead of being cut mid-sequence. */
 	private bodyRows(innerContentWidth: number): string[] {
 		if (this.wrappedForWidth !== innerContentWidth) {
-			const source = this.content.bodyStyled ?? this.content.body;
+			// Markdown is laid out against the live width, so it is re-rendered with
+			// the same memoization the wrap uses.
+			const rendered = this.markdownRows(innerContentWidth);
+			const source = rendered ?? this.content.bodyStyled ?? this.content.body;
+			this.bodyIsStyled = rendered !== undefined || this.content.bodyStyled !== undefined;
 			this.wrappedBody = wrapBody(source, innerContentWidth, wrapTextWithAnsi);
 			this.wrappedForWidth = innerContentWidth;
 		}
@@ -179,7 +196,7 @@ export class OutputModal implements Focusable {
 		// reasoning as the narration rows. Chrome stays dim. Styled rows carry their
 		// own colours; re-colouring them would leak the theme's default foreground
 		// past their first reset.
-		const styled = this.content.bodyStyled !== undefined;
+		const styled = this.bodyIsStyled;
 		for (const bodyLine of slice) {
 			lines.push(rowLine(` ${styled ? bodyLine : th.fg("text", bodyLine)}`));
 		}

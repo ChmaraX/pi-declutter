@@ -163,6 +163,12 @@ auto-expand and rows stay neutral (no red `✗`) — the modal badge carries the
 failure. Only one modal is open at a time; clicking another row swaps its
 content; clicking outside the modal closes it, same as `Esc`.
 
+Modal bodies are rendered, not dumped: a file edit leads with its **coloured
+diff**, `read`/`write` show the file **syntax-highlighted** (up to 500 lines),
+thinking and narration render as **Markdown**, and URLs and existing file paths
+become **clickable links** when the terminal supports them (otherwise they stay
+plain text). `c` always copies the plain text.
+
 ### Deviations from Codex
 
 - The card header appends `· N failed` when a response contains failed calls.

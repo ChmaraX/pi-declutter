@@ -135,6 +135,23 @@ test("an empty narration yields an empty body", () => {
 	assert.equal(content.copyText, "");
 });
 
+// ── Markdown prose ────────────────────────────────────────────────────────────
+
+test("narration and thinking modals carry their prose for Markdown rendering", () => {
+	const text = "## Plan\n\nCheck `src/x.ts`, then *run* the tests.";
+	const narrationContent = narrationModalContent(narration({ text, summary: "Plan" }));
+	const thoughtContent = thoughtModalContent(thought({ ms: 1000, tail: ["ignored"] }), text);
+	assert.equal(narrationContent.markdown, text);
+	assert.equal(thoughtContent.markdown, text);
+	// The plain body and the copied text stay the raw source either way.
+	assert.deepEqual(narrationContent.body, text.split("\n"));
+	assert.equal(thoughtContent.copyText, text);
+});
+
+test("a tool modal has no Markdown prose (its body is output, not writing)", () => {
+	assert.equal(itemModalContent(item({ command: "ls", preview: ["a.ts"] })).markdown, undefined);
+});
+
 // ── scroll windowing ───────────────────────────────────────────────────────────
 
 test("clampScrollTop keeps top within [0, total - viewport]", () => {

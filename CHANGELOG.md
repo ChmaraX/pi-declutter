@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/ChmaraX/pi-declutter/compare/v0.1.0...v0.2.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* drop the Ctrl+Shift+A card shortcut
+
+### Features
+
+* drop the Ctrl+Shift+A card shortcut ([5cf5810](https://github.com/ChmaraX/pi-declutter/commit/5cf5810dbe7853eaf43bd3523a88f79b36bf275d))
+
 ## 0.1.0 (2026-09-26)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "pi-declutter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi, decluttered: fold tool calls, thinking and progress updates into one card per response, with every detail one click away.",
   "keywords": [
     "pi-package",

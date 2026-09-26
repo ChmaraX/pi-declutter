@@ -168,6 +168,7 @@ import {
 	findAssistantMessageComponents,
 	hideMessageTextBlock,
 	installClickAwayClosePatch,
+	rewriteSessionFile,
 	installToolMountHook,
 	installToolRowHidePatch,
 	rehideNarrationAfterRebuild,
@@ -803,8 +804,16 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			cardModel.entries = [];
 			cardModel.live = false;
 			if (interrupted) cardModel.interrupted = true;
+			persistSettledCard();
 		}
 		clearLive();
+	}
+
+	/** Re-serialize the session file after the card settled in place, so a
+	 * cross-process resume reads the full card instead of the empty snapshot pi
+	 * wrote when the entry was appended (guarded, fail-open — see patches.ts). */
+	function persistSettledCard(): void {
+		if (uiCtx) rewriteSessionFile(uiCtx.sessionManager);
 	}
 
 	function clearLive(): void {
@@ -1038,6 +1047,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			};
 			appendCard(frozen);
 		}
+
+		// The settle-live branch mutated the entry pi persisted while it was still
+		// empty; the frozen branch appended complete data. Rewriting covers both.
+		persistSettledCard();
 
 		clearLive();
 		// A modal opened on a still-live row shows that row's final content.

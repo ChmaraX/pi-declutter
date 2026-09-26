@@ -34,6 +34,7 @@ import {
 	matchesLeadingSpacerShape,
 	type RawContentBlock,
 	rehideNarrationAfterRebuild,
+	rewriteSessionFile,
 	stripSuppressedThinkingSpacers,
 	suppressedThinkingSpacersToRemove,
 } from "../src/patches.ts";
@@ -827,4 +828,32 @@ test("installClickAwayClosePatch: works through pi's TUI reference Proxy (get/se
 	assert.equal(real.dispatchMouseToOverlay, wrapped);
 	assert.deepEqual(real.dispatchMouseToOverlay({ type: "press" }), { hit: true });
 	assert.equal(closed, 1);
+});
+
+// ── rewriteSessionFile ────────────────────────────────────────────────────────
+
+test("rewriteSessionFile re-serializes only a flushed, persisted session", () => {
+	let rewrites = 0;
+	const sm = { flushed: true, isPersisted: () => true, _rewriteFile: () => rewrites++ };
+	assert.equal(rewriteSessionFile(sm), true);
+	assert.equal(rewrites, 1);
+	// Before pi's own first flush the file must not be created by us.
+	assert.equal(rewriteSessionFile({ ...sm, flushed: false }), false);
+	// A no-persist session (e.g. -p one-shot) is never written.
+	assert.equal(rewriteSessionFile({ ...sm, isPersisted: () => false }), false);
+	assert.equal(rewrites, 1);
+});
+
+test("rewriteSessionFile fails open on a missing or throwing internal", () => {
+	assert.equal(rewriteSessionFile(undefined), false);
+	assert.equal(rewriteSessionFile({}), false);
+	assert.equal(
+		rewriteSessionFile({
+			flushed: true,
+			_rewriteFile: () => {
+				throw new Error("disk full");
+			},
+		}),
+		false,
+	);
 });

@@ -1007,3 +1007,36 @@ export function installClickAwayClosePatch(tuiHandle: unknown, deps: ClickAwayDe
 	}
 	return true;
 }
+
+// ── Settled-card persistence ─────────────────────────────────────────────────
+
+/**
+ * Re-serialize the session file so the settled card survives a cross-process
+ * resume. pi writes each session entry to disk the moment it is appended — for
+ * the activity card that is the start of the response, when its entry list is
+ * still empty — and holds the entry's `data` by reference afterwards, so by
+ * settle the in-memory session already contains the full card; only the line
+ * on disk is the stale empty snapshot. SessionManager._rewriteFile() persists
+ * the current in-memory entries wholesale.
+ *
+ * Guarded like every other pi-internal touch: duck-typed and fail-open. The
+ * `flushed` check matters — before pi's own first flush (no assistant message
+ * yet) the file must not exist, because pi creates it with open("wx"); writing
+ * it early would make pi's next persist throw EEXIST.
+ */
+export function rewriteSessionFile(sessionManager: unknown): boolean {
+	const sm = sessionManager as {
+		flushed?: unknown;
+		isPersisted?: () => boolean;
+		_rewriteFile?: () => void;
+	} | null;
+	if (!sm || typeof sm._rewriteFile !== "function") return false;
+	if (sm.flushed !== true) return false;
+	if (typeof sm.isPersisted === "function" && !sm.isPersisted()) return false;
+	try {
+		sm._rewriteFile();
+		return true;
+	} catch {
+		return false;
+	}
+}

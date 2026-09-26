@@ -54,6 +54,12 @@ In an open row:
 | `c` | Copy the plain text |
 | `Esc` `q` or click outside | Close |
 
+## Limitations
+
+- **Progress updates can briefly show outside the card.** Pi doesn't mark text
+  as a progress update or as the final answer, so it streams as a normal
+  message first and moves into the card once the agent's next step starts.
+
 ## Development
 
 ```bash

@@ -1,13 +1,12 @@
 /**
- * Tests for the pure label heuristics (ticket 05/07/17), focused on the
- * structured signals ticket 37 introduced / relies on:
+ * Tests for the pure label heuristics, focused on their structured signals:
  *
- *   - describeCallIsGeneric: the args-gist gate now branches on this structured
- *     predicate instead of sniffing describeCall's "Used …" prose (item 7). It
+ *   - describeCallIsGeneric: the args-gist gate branches on this structured
+ *     predicate instead of sniffing describeCall's "Used …" prose. It
  *     must be true for exactly the bare generic fallbacks and false for concrete
  *     labels (file/search/command cases AND self-describing custom tools).
  *   - bucketCountsText == liveCounter minus its "Exploring[ · ]" prefix, the
- *     equivalence that let item 2 drop the regex in index.ts.
+ *     equivalence index.ts relies on instead of a regex.
  */
 
 import assert from "node:assert/strict";
@@ -28,7 +27,7 @@ function call(name: string, args: Record<string, unknown> = {}): ToolCallLike {
 	return { name, arguments: args };
 }
 
-// ── describeCallIsGeneric (item 7 structured signal) ──────────────────────────
+// ── describeCallIsGeneric (structured signal) ─────────────────────────────────
 
 test("describeCallIsGeneric is false for concrete built-in (file/search/command) calls", () => {
 	for (const c of [
@@ -68,8 +67,7 @@ test("describeCallIsGeneric is true for bare generic fallbacks", () => {
 	}
 });
 
-// ── TOOL_TRAITS (review finding 13: one dispatch table, not five scattered
-// switches) ─────────────────────────────────────────────────────────────────
+// ── TOOL_TRAITS (one dispatch table, not five scattered switches) ───────────────
 
 test("toolGlyph/bucketOf/isCommandTool/isPreviewTool agree per built-in tool", () => {
 	const expected: Record<string, { bucket: string; glyph: string; isCommand: boolean; preview: boolean }> = {
@@ -103,8 +101,8 @@ test("unknown/MCP tool names keep today's fallback: generic bucket, default glyp
 });
 
 test("describeCallIsGeneric matches describeCall's 'Used ' prefix across a mixed set", () => {
-	// The predicate must agree with the old prose test on every input, so the
-	// gist gate is unchanged in behavior.
+	// The predicate must agree with the "Used " prose prefix on every input, so
+	// the gist gate behaves identically.
 	const cases = [
 		call("read", { path: "a.ts" }),
 		call("bash", { command: "ls" }),

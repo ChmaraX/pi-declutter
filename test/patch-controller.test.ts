@@ -1,6 +1,5 @@
 /**
- * PatchController state-machine tests (ticket 38). This orchestration logic was
- * previously trapped in the index.ts closure and untested. Exercises:
+ * PatchController state-machine tests. Exercises:
  *   - hasLiveUI gating (print mode / no TUI → never attempts),
  *   - no-instance stays retryable (does NOT latch resolved),
  *   - a found-but-shape-drifted instance resolves fail-open and LATCHES (stops

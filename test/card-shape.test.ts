@@ -1,5 +1,5 @@
 /**
- * Headless render-shape tests for the pure activity-card shaping (tickets 12 + 16 + 21).
+ * Headless render-shape tests for the pure activity-card shaping.
  *
  * Runs via Node's built-in TypeScript type-stripping (Node >= 23.6), no TUI:
  * `node --test test/card-shape.test.ts` (see package.json `test`). These lock
@@ -7,12 +7,12 @@
  *   - the card renders in its FINAL shape from the first tool and grows in place
  *     (live vs settled differ only in the header and running-row glyph),
  *   - the card is an ordered TOP-LEVEL sequence of Group and Thought entries in
- *     event order (ticket 21): thinking sits BETWEEN groups, not inside them,
- *   - per-node expansion (ticket 16): full-collapse / default / all-expanded,
+ *     event order: thinking sits BETWEEN groups, not inside them,
+ *   - per-node expansion: full-collapse / default / all-expanded,
  *     per-group members, per-member output box, per-thought "Thinking" box,
  *   - shapeCard returns a parallel row-map (line index → node id) for the mouse,
  *   - singleton groups render as the member row directly,
- *   - failures stay calm (ticket 18): no auto-expand, the row keeps its family
+ *   - failures stay calm: no auto-expand, the row keeps its family
  *     glyph (no red ✗), and every failed call has a box carrying the badge,
  *   - output previews are trimmed to the last N lines and truncated.
  */
@@ -61,9 +61,9 @@ function line(shaped: { indent: number; segments: { text: string }[] }): string 
 	return " ".repeat(shaped.indent) + shaped.segments.map((s) => s.text).join("");
 }
 
-/** Expansion state: default view (members hidden) unless overridden. Inline
- * boxes were removed in ticket 35 (rows open a modal), so the only tree state
- * left is per-group member visibility. */
+/** Expansion state: default view (members hidden) unless overridden. There are
+ * no inline boxes (rows open a modal), so the only tree state is per-group
+ * member visibility. */
 function exp(overrides: Partial<CardExpansion> = {}): CardExpansion {
 	return { fullCollapsed: false, isMembersVisible: () => false, ...overrides };
 }
@@ -94,7 +94,7 @@ function narration(overrides: Partial<ShapeNarration> = {}): ShapeNarration {
 	return { text: "", summary: "", ...overrides };
 }
 
-/** Wrap a group / thought / narration as a top-level card entry (ticket 21/41). */
+/** Wrap a group / thought / narration as a top-level card entry. */
 const ge = (g: ShapeGroup): CardEntry => ({ kind: "group", group: g });
 const te = (t: ShapeThought): CardEntry => ({ kind: "thought", thought: t });
 const ne = (n: ShapeNarration): CardEntry => ({ kind: "narration", narration: n });
@@ -117,7 +117,7 @@ const cmds = group({
 
 test("live header shows the animated spinner frame + 'Working · Xs ▾', settled is 'Worked for Xs ▾', collapsed '▸'", () => {
 	const live = model({ live: true, elapsedMs: 12000 });
-	// The header now uses the passed spinner frame (ticket 36), not a static glyph.
+	// The header uses the passed spinner frame, not a static glyph.
 	assert.equal(render(live)[0], `${SPIN} Working · 12s ▾`);
 
 	const settled = model({ elapsedMs: 39000 });
@@ -130,7 +130,7 @@ test("failure count is appended to the header before the chevron", () => {
 	assert.equal(render(m)[0], "Worked for 39s · 2 failed ▾");
 });
 
-// ── Spinner frame derivation (ticket 36) ───────────────────────────────────────
+// ── Spinner frame derivation ───────────────────────────────────────────────────
 test("spinnerFrame advances one pi frame every SPINNER_INTERVAL_MS and cycles", () => {
 	// Frame 0 at t=0, still frame 0 just before the interval, frame 1 at the interval.
 	assert.equal(spinnerFrame(0), SPINNER_FRAMES[0]);
@@ -150,7 +150,7 @@ test("SPINNER_FRAMES are pi's ten single-cell braille frames (row width never sh
 	for (const f of SPINNER_FRAMES) assert.equal([...f].length, 1);
 });
 
-// ── Three card states (ticket 16) ────────────────────────────────────────────────
+// ── Three card states ────────────────────────────────────────────────────────────
 
 test("full-collapse shows only the header", () => {
 	const m = model({ entries: [ge(cmds)] });
@@ -162,7 +162,7 @@ test("default shows the group row only (members hidden), chevron closed", () => 
 	assert.deepEqual(render(m, exp()), ["Worked for 39s ▾", "  • Ran commands · 2 commands ▸"]);
 });
 
-test("all-expanded shows members; a member with output gets the openable chevron (no inline box, ticket 35)", () => {
+test("all-expanded shows members; a member with output gets the openable chevron (no inline box)", () => {
 	const m = model({ entries: [ge(cmds)] });
 	assert.deepEqual(render(m, ALL_OPEN), [
 		"Worked for 39s ▾",
@@ -208,7 +208,7 @@ test("only a member with output gets a chevron", () => {
 	assert.ok(line(lines[3]).endsWith(" ▸"));
 });
 
-// ── Singleton groups render as the member row directly (atlas U02, ticket 21) ────
+// ── Singleton groups render as the member row directly ──────────────────────────
 
 test("default singleton group shows one member row; box chevron only with output", () => {
 	const noOutput = model({ entries: [ge(group({ label: "Read a.ts", items: [item({ label: "Read a.ts" })] }))] });
@@ -216,15 +216,15 @@ test("default singleton group shows one member row; box chevron only with output
 
 	const withOutput = model({ entries: [ge(group({ items: [item({ label: "Ran ls", glyph: "≡", durMs: 100, preview: ["a.ts", "b.ts"] })] }))] });
 	// The singleton member with output shows the openable chevron; clicking opens
-	// the modal (ticket 35) — no inline box ever renders.
+	// the modal — no inline box ever renders.
 	assert.deepEqual(render(withOutput), ["Worked for 39s ▾", "  ≡ Ran ls (0.1s) ▸"]);
 	assert.ok(!render(withOutput, ALL_OPEN).some((l) => l.includes("┌")));
 });
 
-// ── Ordered top-level flow: thought / group interleave (ticket 21) ───────────────
+// ── Ordered top-level flow: thought / group interleave ───────────────────────────
 
 test("thought and group entries render in event order at the top level", () => {
-	// think → 2 commands → think → singleton, exactly as the ticket example.
+	// think → 2 commands → think → singleton.
 	const make = group({ items: [item({ label: "Ran make test", glyph: "$", durMs: 4000, command: "make test" })] });
 	const m = model({
 		elapsedMs: 42000,
@@ -254,9 +254,9 @@ test("thought text never appears at the collapsed group level", () => {
 	assert.equal(def[2], "  • Ran commands · 2 commands ▸");
 });
 
-// ── Row-map: line index → node id (ticket 16 + 21 mouse mapping) ─────────────────
+// ── Row-map: line index → node id (mouse mapping) ────────────────────────────────
 
-test("row-map pairs each line with its top-level node (one line per row now, ticket 35)", () => {
+test("row-map pairs each line with its top-level node (one line per row)", () => {
 	const reads = group({ label: "Read files", counts: "2 files", items: [item({ label: "Read a.ts" }), item({ label: "Read b.ts" })] });
 	const m = model({ entries: [ge(reads), ge(cmds)] });
 	// Both groups' members visible. No inline boxes, so each node is exactly one row.
@@ -274,7 +274,7 @@ test("row-map pairs each line with its top-level node (one line per row now, tic
 	]);
 });
 
-test("a thought entry between groups maps to its thought node (one row, ticket 35)", () => {
+test("a thought entry between groups maps to its thought node (one row)", () => {
 	const m = model({
 		entries: [ge(cmds), te(thought({ ms: 2000, summary: "why", tail: ["why", "because"] })), ge(cmds)],
 	});
@@ -293,7 +293,7 @@ test("full-collapse row-map is the header only", () => {
 	assert.deepEqual(shapeCard(m, COLLAPSED, SPIN).rowMap, [HEADER_NODE]);
 });
 
-test("singleton group row maps to its member node (one row, ticket 35)", () => {
+test("singleton group row maps to its member node (one row)", () => {
 	const m = model({ entries: [ge(group({ items: [item({ label: "Ran ls", glyph: "≡", preview: ["x"] })] }))] });
 	const shaped = shapeCard(m, exp(), SPIN);
 	assert.deepEqual(shaped.rowMap, [HEADER_NODE, memberNodeId(0, 0)]);
@@ -377,7 +377,7 @@ test("a currently-running singleton shows the spinner in the default row", () =>
 	assert.deepEqual(render(m), [`${SPIN} Working · 2s`, `  ${SPIN} Read a.ts`].map((l, i) => (i === 0 ? `${l} ▾` : l)));
 });
 
-// ── Thought entries (ticket 21): row, summary, expandable box ────────────────────
+// ── Thought entries: row, summary, expandable box ────────────────────────────────
 
 test("a bare thought entry (no captured text) has no chevron and no box", () => {
 	const m = model({ entries: [te(thought({ ms: 4000 }))] });
@@ -407,13 +407,13 @@ test("coalesceThoughts sums durations and keeps the LAST >=1s span's summary + t
 	assert.equal(out.ms, 4700); // all durations summed
 	assert.equal(out.summary, "Second real thought"); // last >=1s span wins
 	assert.deepEqual(out.tail, ["Second real thought", "line1", "line2"]);
-	// fullText now carries EVERY span in stream order (owner bug: multi-span
-	// providers — Cursor — lost all but the last span from the modal); the
+	// fullText carries EVERY span in stream order (otherwise multi-span
+	// providers — Cursor — would lose all but the last span from the modal); the
 	// summary/tail glance view stays chosen-span.
 	assert.equal(out.fullText, "tiny sub-second span\n\nFirst real thought\nbody a\n\nSecond real thought\nline1\nline2");
 });
 
-test("coalesceThoughts.fullText is UNTRUNCATED (ticket 40) while .tail stays previewLines-capped", () => {
+test("coalesceThoughts.fullText is UNTRUNCATED while .tail stays previewLines-capped", () => {
 	// One line far longer than MAX_PREVIEW_LINE_LEN (120), and more real lines than
 	// MAX_THOUGHT_TAIL (10) — .tail must still cap/truncate for the compact card-row
 	// glance; .fullText must carry every character and every line untouched.
@@ -449,13 +449,13 @@ test("a settled thought with a captured tail shows '· Thought Ns · <summary> �
 	const shaped = shapeCard(m, exp(), SPIN);
 	assert.equal(line(shaped.lines[1]), "  · Thought 3s · Weighing the options ▸");
 	assert.equal(shaped.rowMap[1], thoughtNodeId(0));
-	// The tail text is NEVER rendered inline anymore (it lives in the modal).
+	// The tail text is NEVER rendered inline (it lives in the modal).
 	assert.ok(!render(m).some((l) => l.includes("a vs b")));
 	assert.ok(!shaped.lines.some((l) => l.kind === "preview"));
 	assert.ok(!render(m).some((l) => l.includes("┌ Thinking")));
 });
 
-// ── Narration entries (ticket 41): intermediate assistant text folded into the
+// ── Narration entries: intermediate assistant text folded into the
 // card in its chronological spot, always clickable (a modal shows the full text) ──
 
 test("a narration entry shows '› <summary> ▸' and is always openable", () => {
@@ -465,7 +465,7 @@ test("a narration entry shows '› <summary> ▸' and is always openable", () =>
 	assert.equal(line(shaped.lines[1]), "  › Checking the config file next… ▸");
 	assert.equal(shaped.rowMap[1], narrationNodeId(0));
 	assert.equal(shaped.lines[1].kind, "narration");
-	// Never rendered as a Fowler-style inline box; the full text lives in the modal.
+	// Never rendered as an inline box; the full text lives in the modal.
 	assert.ok(!render(m).some((l) => l.includes("Checking the config file next, then")));
 });
 
@@ -499,7 +499,7 @@ test("narrationTexts returns [] when there is no narration", () => {
 	assert.deepEqual(narrationTexts([]), []);
 });
 
-// ── Live thinking entry (ticket 23): spinner row, in-place transform, live tail ──
+// ── Live thinking entry: spinner row, in-place transform, live tail ──
 
 test("a live thought entry renders '⟳ Thinking… · Xs ▸' with the spinner mark", () => {
 	// A live entry shows the spinner + "Thinking…" and NOT the (still-forming) summary.
@@ -533,7 +533,7 @@ test("a live thought transforms in place to the settled row: same node id, stabl
 	assert.equal(line(liveShaped.lines[liveIdx]), `  ${SPIN} Thinking… · 3s`);
 	assert.equal(line(settledShaped.lines[settledIdx]), "  · Thought 3s · Weighing options ▸");
 	// The rows BETWEEN the header and the thought are identical (the header word
-	// legitimately changes live→settled per ticket 12; everything else is stable).
+	// legitimately changes live→settled; everything else is stable).
 	assert.deepEqual(liveShaped.lines.slice(1, liveIdx).map(line), settledShaped.lines.slice(1, settledIdx).map(line));
 });
 
@@ -564,9 +564,9 @@ test("groupHasMembersToggle is true only for multi-tool groups", () => {
 	assert.equal(groupHasMembersToggle(group({ items: [item()] })), false);
 });
 
-// ── Output preview (ticket 12 req 5) ────────────────────────────────────────────
+// ── Output preview ──────────────────────────────────────────────────────────────
 
-test("output is NEVER rendered inline; the row is openable (ticket 35)", () => {
+test("output is NEVER rendered inline; the row is openable", () => {
 	const m = model({ entries: [ge(group({ items: [item({ label: "Ran git", glyph: "$", durMs: 500, preview: ["line1", "line2"] })] }))] });
 	assert.ok(!render(m).some((l) => l.includes("line1")));
 	const shaped = shapeCard(m, ALL_OPEN, SPIN);
@@ -589,7 +589,7 @@ test("previewLines keeps the last N (8) non-empty lines and truncates long lines
 	assert.ok(truncated.endsWith("…"));
 });
 
-// ── Failures stay calm (ticket 18): no auto-expand, glyph row, box badge ─────────
+// ── Failures stay calm: no auto-expand, glyph row, box badge ─────────────────────
 
 test("a settled failure does NOT auto-expand: default view still hides members", () => {
 	const failed = item({ label: "Ran git push", glyph: "$", isError: true, command: "git push", exitCode: 1 });
@@ -600,7 +600,7 @@ test("a settled failure does NOT auto-expand: default view still hides members",
 	assert.deepEqual(render(m, exp()), ["Worked for 39s · 1 failed ▾", "  • Ran commands · 2 commands ▸"]);
 });
 
-test("a failed command shows the family glyph on the row (no red ✗), badge lives in the modal (ticket 35)", () => {
+test("a failed command shows the family glyph on the row (no red ✗), badge lives in the modal", () => {
 	const failed = item({ label: "Ran git push", glyph: "$", isError: true, command: "git push", exitCode: 1, preview: ["fatal: no upstream"] });
 	const m = model({
 		failures: 1,
@@ -609,12 +609,12 @@ test("a failed command shows the family glyph on the row (no red ✗), badge liv
 	const lines = render(m, ALL_OPEN);
 	assert.ok(lines.some((l) => l.startsWith("    $ Ran git push")));
 	assert.ok(!lines.some((l) => l.includes("✗ Ran git")));
-	// The exit-code badge is no longer inline; it renders in the modal (itemBadge unit-tested).
+	// The exit-code badge is not inline; it renders in the modal (itemBadge unit-tested).
 	assert.ok(!lines.some((l) => l.includes("Exit code 1")));
 	assert.deepEqual(itemBadge(failed), { text: "Exit code 1", tone: "error" });
 });
 
-test("a failed member with NO box-worthy output is still openable; badge lives in the modal (ticket 18/35)", () => {
+test("a failed member with NO box-worthy output is still openable; badge lives in the modal", () => {
 	const failedRead = item({ label: "Read gone.ts", glyph: "▤", isError: true, preview: [] });
 	const m = model({ failures: 1, entries: [ge(group({ items: [failedRead] }))] });
 	const defaultLines = render(m);
@@ -631,7 +631,7 @@ test("itemHasBox: command, output, or failure each yields a box; a clean read do
 	assert.equal(itemHasBox(item({ isError: false, preview: [] })), false);
 });
 
-// ── Box tail cleanup (ticket 19): trim trailing blanks + strip exit-code line ──
+// ── Box tail cleanup: trim trailing blanks + strip exit-code line ──
 
 test("boxTail strips a trailing 'Command exited with code N' line the badge repeats", () => {
 	assert.deepEqual(boxTail(["fatal: no upstream", "Command exited with code 1"], 1), ["fatal: no upstream"]);
@@ -659,7 +659,7 @@ test("a failed command box drops the duplicated exit-code line but keeps real ou
 	const m = model({ failures: 1, entries: [ge(group({ items: [failed] }))] });
 	// The card itself renders no inline output. The exit-code/trailing-blank cleanup
 	// for the MODAL body is verified in test/modal.test.ts against production
-	// itemModalContent (review P2 #2). boxTail is unit-tested directly just above.
+	// itemModalContent. boxTail is unit-tested directly just above.
 	assert.ok(!render(m, ALL_OPEN).some((l) => l.includes("fatal: no upstream") || l.includes("Exit code 1")));
 	assert.deepEqual(boxTail(failed.preview, failed.exitCode), ["fatal: no upstream"]);
 });
@@ -685,14 +685,14 @@ test("toolGlyph maps each family to one single-width glyph", () => {
 	}
 });
 
-test("a command with no output is still openable (chevron); its content lives in the modal (ticket 35)", () => {
+test("a command with no output is still openable (chevron); its content lives in the modal", () => {
 	const m = model({ entries: [ge(group({ items: [item({ label: "Ran git status", glyph: "$", command: "git status", durMs: 200 })] }))] });
 	assert.ok(render(m).some((l) => l.endsWith(" ▸"))); // openable
 	// No inline Shell box is ever drawn now.
 	assert.ok(!render(m, ALL_OPEN).some((l) => l.includes("┌ Shell") || l.includes("$ git status")));
 });
 
-// ── Hover affordance (ticket 24) ────────────────────────────────────────────────
+// ── Hover affordance ────────────────────────────────────────────────────────────
 // shapeCard takes an optional hoveredNode: the PRIMARY row whose node id matches
 // is marked `hovered` (the Component bolds it) and its chevron is bumped to
 // `accent`. Box/preview lines are never lit, and passing no hoveredNode leaves
@@ -726,7 +726,7 @@ test("shapeCard highlights only the hovered group row and emphasizes its chevron
 	assert.equal(chevron?.tone, "accent");
 });
 
-test("shapeCard lights exactly the hovered member row (one row per node now, ticket 35)", () => {
+test("shapeCard lights exactly the hovered member row (one row per node)", () => {
 	const m = model({ entries: [ge(cmds)] });
 	const memberNode = memberNodeId(0, 1); // the git-status member (openable)
 	const shaped = shapeCard(m, exp({ isMembersVisible: () => true }), SPIN, memberNode);
@@ -754,7 +754,7 @@ test("a full-collapsed card can still hover its header row", () => {
 	assert.equal(shaped.lines[0].segments.at(-1)?.tone, "accent");
 });
 
-// ── Interrupted marker (ticket 32) ──────────────────────────────────────────────
+// ── Interrupted marker ──────────────────────────────────────────────────────────
 // A card force-settled on an abnormal end (stream error / user Esc abort) carries
 // interrupted:true, so its settled header says "· interrupted" (dim/warn tone)
 // instead of pretending clean completion. Only on the settled header — never live.

@@ -1,6 +1,5 @@
 /**
- * MouseController tests (split out of index.ts's mouse layer). Exercises the
- * seams that were previously trapped in the index.ts closure:
+ * MouseController tests. Exercises its seams:
  *   - hover resolution commits undefined/undefined on a motion report that hits
  *     no card (leave),
  *   - click resolution returns false for a packet outside the rendered buffer
@@ -71,7 +70,7 @@ function makeController(tui?: FakeTui) {
 	return { controller, runtime, hover };
 }
 
-// A motion packet (any-motion 1003, code 35 = no-button hover; ticket 24).
+// A motion packet (any-motion 1003, code 35 = no-button hover).
 const MOTION_PACKET: MousePacket = { code: 35, col: 5, row: 1, final: "M" };
 // A left-button press packet (code 0).
 const PRESS_PACKET: MousePacket = { code: 0, col: 5, row: 1, final: "M" };

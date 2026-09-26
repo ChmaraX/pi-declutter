@@ -1,15 +1,15 @@
 /**
- * Headless unit tests for the pure flow state machine (tickets 10 + 21).
+ * Headless unit tests for the pure flow state machine.
  *
  * Runs via Node's built-in TypeScript type-stripping (Node >= 23.6), no TUI and
  * no build step: `node --test test/grouping.test.ts` (see package.json `test`).
  *
  * These lock the flow behaviours:
- *   1. Groups break on assistant text with non-whitespace content (ticket 10) AND
- *      on meaningful thinking (ticket 21); empty/whitespace text and turn
+ *   1. Groups break on assistant text with non-whitespace content AND
+ *      on meaningful thinking; empty/whitespace text and turn
  *      boundaries do NOT break, so sequential tool-only turns stay one group.
  *   2. The card is an ordered TOP-LEVEL sequence of Group and Thought entries in
- *      event order (ticket 21).
+ *      event order.
  *   3. Meaningful thinking = consecutive spans totaling >= MIN_THOUGHT_MS: it
  *      closes the current group and becomes its own thought entry between groups.
  *      Sub-threshold thinking is ignored entirely (does not break, does not emit).
@@ -97,7 +97,7 @@ test("leading whitespace delta then content still breaks exactly once", () => {
 	assert.deepEqual(groupCalls(entries[1]), ["bash", "grep"]);
 });
 
-test("text_end with content breaks even when no delta carried it, and records a narration entry (ticket 41)", () => {
+test("text_end with content breaks even when no delta carried it, and records a narration entry", () => {
 	const g = grouper();
 	g.addCall("read");
 	g.textStart();
@@ -124,7 +124,7 @@ test("a leading text block before any tool does not create an empty group", () =
 	assert.deepEqual(groupCalls(entries[0]), ["read"]);
 });
 
-// ── Meaningful thinking as its own top-level entry (ticket 21) ───────────────────
+// ── Meaningful thinking as its own top-level entry ───────────────────────────────
 
 test("think → cmd → think → cmd is four ordered entries in event order", () => {
 	const g = grouper();
@@ -251,7 +251,7 @@ test("MIN_THOUGHT_MS is the 1s threshold", () => {
 	assert.equal(MIN_THOUGHT_MS, 1000);
 });
 
-// ── Live thinking exposed in snapshot (ticket 23) ────────────────────────────────
+// ── Live thinking exposed in snapshot ────────────────────────────────────────────
 
 test("snapshot exposes a suprathreshold live thinking span as a trailing thought entry", () => {
 	const g = grouper();
@@ -329,7 +329,7 @@ test("finalize is idempotent after reset (duplicate settle is a no-op)", () => {
 	assert.equal(g.finalize().entries.length, 0);
 });
 
-test("force-settle transition: an open group + a flushed open thinking span finalize in order (ticket 32)", () => {
+test("force-settle transition: an open group + a flushed open thinking span finalize in order", () => {
 	// Mirrors index.ts force-settle: at an abnormal end (stream error / abort) the
 	// open thinking span is flushed via addThought (elapsed + partial text) BEFORE
 	// finalize, so the interrupted card closes with the group then its trailing
@@ -347,7 +347,7 @@ test("force-settle transition: an open group + a flushed open thinking span fina
 	assert.equal(thoughtMs(entries[1]), 3000);
 });
 
-// ── Narration entries + finalAnswer popping (ticket 41) ─────────────────────────
+// ── Narration entries + finalAnswer popping ─────────────────────────────────────
 // An intermediate assistant text block folds into the card as a "narration" entry
 // in its chronological spot; the TRUE final answer (nothing follows it) is popped
 // out of the sequence by finalize() and returned separately, never as a card row.

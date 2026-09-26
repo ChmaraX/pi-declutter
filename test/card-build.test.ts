@@ -1,6 +1,6 @@
 /**
- * buildCardEntries tests (ticket 38): the pure grouper-entries → card-data
- * conversion, extracted from index.ts. Verifies group labels/counts, failure
+ * buildCardEntries tests: the pure grouper-entries → card-data conversion.
+ * Verifies group labels/counts, failure
  * counting, settledIds collection, single vs multi-member labelling, thought
  * coalescing, and the live-thought marking.
  */
@@ -99,7 +99,7 @@ test("buildCardEntries: liveThinkingActive does NOT mark a trailing GROUP entry"
 	if (first.kind === "thought") assert.notEqual(first.thought.live, true);
 });
 
-// ── settleAction (ticket 38: the settle decision, pure) ───────────────────────
+// ── settleAction (the settle decision, pure) ──────────────────────────────────
 
 const EMPTY: CardEntryBuild = { entries: [], settledIds: [], failures: 0 };
 const RENDERABLE: CardEntryBuild = {
@@ -130,7 +130,7 @@ test("settleAction: a group with a label but zero items still counts as renderab
 	assert.equal(settleAction(labelOnly, true), "settle-live");
 });
 
-// ── Narration entries (ticket 41) ────────────────────────────────────────────────
+// ── Narration entries ────────────────────────────────────────────────────────────
 
 test("buildCardEntries: a narration entry carries the full text plus a derived summary", () => {
 	const entries: Entry<ToolCall>[] = [{ kind: "narration", text: "**Checking config**\nThe file looks fine so far." }];

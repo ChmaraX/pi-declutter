@@ -1,14 +1,12 @@
 /**
- * Guarded runtime patch layer (tickets 30 + 31).
+ * Guarded runtime patch layer.
  *
- * The owner lifted the no-monkey-patching constraint (map "Out of scope",
- * 2026-09-15; pi-cc-extensions precedent): guarded RUNTIME patching of pi
- * internals from within the extension is now in scope — feature-detected,
- * fail-open, reversible, removed when upstream obsoletes it. Unguarded patching
- * stays out.
+ * Runtime patching of pi internals is done only when guarded (pi-cc-extensions
+ * precedent): feature-detected, fail-open, reversible, and to be removed when
+ * upstream obsoletes it. Unguarded patching is out of scope.
  *
- * The one patch here neutralizes the single irreducible blank the activity feed
- * could not remove with supported APIs (tickets 22/26/27): pi's
+ * The leading-Spacer patch neutralizes the blank the activity feed cannot
+ * remove with supported APIs: pi's
  * AssistantMessageComponent adds a LEADING `Spacer(1)` before a message's content
  * whenever the message has any visible RAW content, computed pre-transform from
  * text OR thinking (`assistant-message.js:74-76`):
@@ -21,20 +19,19 @@
  * The extension suppresses native thinking with a markdown transformer that
  * blanks `assistant-thinking` to zero rows (src/index.ts), so a message whose
  * ONLY visible raw content is thinking (`[thinking, toolCall…]`, the shape a big
- * task emits dozens of — ticket 26) renders its thinking body to nothing yet
- * still keeps this leading Spacer. Those spacers stack additively into the
- * owner's audited ~40-blank gap.
+ * task emits dozens of) renders its thinking body to nothing yet still keeps
+ * this leading Spacer. Those spacers stack additively into a gap of dozens of
+ * blank lines.
  *
- * ── Ticket 31: patch the LIVE prototype, not the imported class copy ─────────
- * The first attempt (ticket 30) patched `AssistantMessageComponent.prototype`
- * from the class the extension `import`s. That had ZERO live effect: pi's CLI runs
- * a BUNDLE (`dist/bundle/chunks/chunk-*.js`) whose `AssistantMessageComponent` is
- * a DIFFERENT class object than the one the extension's
- * `import { AssistantMessageComponent }` resolves to (the unbundled `dist`). We
- * patched a prototype no live component uses. The probe imported the same
- * unbundled copy, so it was falsely green.
+ * ── Patch the LIVE prototype, not the imported class copy ────────────────────
+ * Patching `AssistantMessageComponent.prototype` from the class the extension
+ * `import`s has ZERO live effect: pi's CLI runs a BUNDLE
+ * (`dist/bundle/chunks/chunk-*.js`) whose `AssistantMessageComponent` is a
+ * DIFFERENT class object than the one the extension's
+ * `import { AssistantMessageComponent }` resolves to (the unbundled `dist`).
+ * A probe that imports the same unbundled copy is falsely green.
  *
- * The fix (this module): obtain the prototype from a LIVE component instance found
+ * So this module obtains the prototype from a LIVE component instance found
  * by walking the running chat tree from the captured TUI handle, and patch THAT.
  * Identity is established by DUCK-TYPING distinctive members
  * (updateContent + contentContainer + a thinking-block setter) — NOT by an
@@ -45,21 +42,20 @@
  *
  * The fingerprint (`matchesLeadingSpacerShape`) is whitespace-NORMALIZED so it
  * matches BOTH the readable `dist` source and the minified bundle source (the
- * bundle inlines `hasVisibleContent` and strips spaces, so the old spaced tokens
- * never matched it — a second reason the ticket-30 patch would have failed open
- * even against the right prototype).
+ * bundle inlines `hasVisibleContent` and strips spaces, so spaced tokens would
+ * never match it and the patch would fail open even against the right
+ * prototype).
  *
- * ── Ticket 33: strip ALL spacers bordering a suppressed thinking run ─────────
+ * ── Strip ALL spacers bordering a suppressed thinking run ────────────────────
  * The leading Spacer is not the only blank. `updateContent` also adds a TRAILING
  * `Spacer(1)` after each thinking run when visible content follows
  * (`assistant-message.js:130`). Once our transformer blanks the thinking body to
  * zero rows, BOTH the leading and the trailing spacer become pure dead blanks —
- * so a `[thinking, text]` answer leaked 2 blanks above the text, and a multi-run
- * `[thinking, tool, thinking, text]` leaked 3. The original leading-only removal
- * (and its `onlyVisibleThinking` gate, which bailed the moment any text was
- * present) never touched these, which was the dominant remaining gap.
+ * so a `[thinking, text]` answer would leak 2 blanks above the text, and a
+ * multi-run `[thinking, tool, thinking, text]` would leak 3. Removing only the
+ * leading spacer is not enough.
  *
- * This module now removes EVERY dead blank spacer around a suppressed thinking
+ * This module removes EVERY dead blank spacer around a suppressed thinking
  * run, on ANY message shape, by measuring what actually rendered
  * (`suppressedThinkingSpacersToRemove`): a Spacer is dead unless it sits strictly
  * between two visible (≥1-row, non-Spacer) blocks; exactly ONE leading margin is
@@ -68,8 +64,8 @@
  * `[thinking,tool]` (no visible block) drops to zero. The transcript's
  * stored/resent message is not touched at all — this is a render-tree edit,
  * applied AFTER pi builds the content container, so it cannot change what is
- * persisted or re-sent to the provider (the constraint that forbade the
- * `message_end` route, ticket 26).
+ * persisted or re-sent to the provider (the constraint that rules out editing
+ * the message at `message_end`).
  *
  * Guard contract (why this is safe to ship):
  *   - Feature-detected: the patch installs ONLY when the compiled pi 0.85.1
@@ -115,7 +111,7 @@ export interface RawContentBlock {
  * variable-name-agnostic — they match BOTH the readable `dist` build
  * (`(c.type === "text" && c.text.trim())` …) AND the minified bundle the CLI runs
  * (`c2.type==="text"&&c2.text.trim()` …), which inlines `hasVisibleContent` and
- * strips spaces (ticket 31). All must be present for the patch to install; a
+ * strips spaces. All must be present for the patch to install; a
  * missing token means the method drifted and we fail open. The last token is the
  * strongest fingerprint — it is the exact statement whose effect (a leading
  * `Spacer(1)` added to `contentContainer`) this patch reverses.
@@ -129,7 +125,7 @@ export const LEADING_SPACER_SIGNATURE: readonly string[] = [
 
 /** True when `source` (an `updateContent.toString()`) still matches the exact
  * pi 0.85.1 leading-Spacer shape this patch targets. Whitespace is stripped first
- * so both the readable `dist` and the minified bundle source match (ticket 31). */
+ * so both the readable `dist` and the minified bundle source match. */
 export function matchesLeadingSpacerShape(source: string): boolean {
 	const normalized = source.replace(/\s+/g, "");
 	return LEADING_SPACER_SIGNATURE.every((token) => normalized.includes(token));
@@ -153,7 +149,7 @@ interface PatchContentContainer {
 }
 
 /** Minimal AssistantMessageComponent instance shape after updateContent runs.
- * Exported (ticket 41) so index.ts can type the instance it captures at text_end
+ * Exported so index.ts can type the instance it captures at text_end
  * for later narration hide/no-op, without re-declaring the shape. */
 export interface PatchTargetInstance {
 	contentContainer?: PatchContentContainer;
@@ -161,7 +157,7 @@ export interface PatchTargetInstance {
 	lastMessage?: { content?: unknown };
 	/** Re-render from `lastMessage` (or an explicitly passed message) through
 	 * whatever updateContent is CURRENTLY bound — original or patched — so a
-	 * narration hide (ticket 41, hideMessageTextBlock) composes with the spacer
+	 * narration hide (hideMessageTextBlock) composes with the spacer
 	 * patch instead of bypassing it. */
 	updateContent?: (message: { content?: unknown }, ...rest: unknown[]) => unknown;
 }
@@ -173,7 +169,7 @@ interface PatchTargetPrototype {
 
 /**
  * True when `child` looks like a pi-tui `Spacer` — the leading blank pi adds.
- * Duck-typed rather than `instanceof` because the bundle/dist split (ticket 31)
+ * Duck-typed rather than `instanceof` because the bundle/dist split
  * makes an imported `Spacer` class a different object than the live one; a Spacer
  * has a numeric `lines`, a `setLines`/`render` pair, and is NOT a container (no
  * `children` array). An optional live `spacerClass` (derived from a real leading
@@ -217,7 +213,7 @@ export function childRowCount(child: unknown, width: number): number {
 /** Strip ANSI/OSC escape sequences, then check if what remains is only
  * whitespace. pi's HIDDEN-thinking path renders a Text of the (empty) hidden
  * label wrapped in italic+colour escapes plus right-padding — 1 physical line
- * that is VISUALLY blank (ticket 34: the real leak). childRowCount counts it as
+ * that is VISUALLY blank. childRowCount counts it as
  * 1, so it must be classified blank here or its bordering spacers look live. */
 // eslint-disable-next-line no-control-regex
 const ANSI_OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b\[[0-9;]*[A-Za-z]/g;
@@ -246,7 +242,7 @@ export function visibleRowCount(child: unknown, width: number): number {
  * to REMOVE so that a thinking run we suppressed to zero rows contributes zero
  * total rows INCLUDING its bordering `Spacer(1)`s — while a real text paragraph
  * keeps exactly the single leading margin pi would give it if the thinking were
- * absent (ticket 33). Pure and render-measured, so it matches what actually
+ * absent. Pure and render-measured, so it matches what actually
  * rendered rather than message content types.
  *
  * Rule (verified against the real component for [think,text], [think,tool],
@@ -263,7 +259,7 @@ export function visibleRowCount(child: unknown, width: number): number {
  */
 export function suppressedThinkingSpacersToRemove(children: readonly unknown[], width: number, spacerClass?: Function): unknown[] {
 	// VISIBLE rows, not physical rows: a hidden-label thinking Text renders 1
-	// physical but visually-blank row (ticket 34), so it must classify as 0 or its
+	// physical but visually-blank row, so it must classify as 0 or its
 	// bordering spacers look live and survive.
 	const visible = children.map((c) => visibleRowCount(c, width));
 	const physical = children.map((c) => childRowCount(c, width));
@@ -281,7 +277,7 @@ export function suppressedThinkingSpacersToRemove(children: readonly unknown[], 
 			// Dead when it does NOT sit strictly between two visible blocks.
 			if (!(prevVisible && nextVisible)) dead.push(i);
 		} else if (physical[i] > 0 && visible[i] === 0) {
-			// PHANTOM row (ticket 34): a non-Spacer child that renders ≥1 physical row
+			// PHANTOM row: a non-Spacer child that renders ≥1 physical row
 			// but is VISUALLY blank — pi's hidden-label thinking Text (empty label wrapped
 			// in italic/colour escapes + right-padding). It eats a real screen line, so
 			// remove it. A genuinely 0-physical-row suppressed thinking (dist transformer
@@ -307,7 +303,7 @@ export function suppressedThinkingSpacersToRemove(children: readonly unknown[], 
 
 /**
  * Duck-type an AssistantMessageComponent instance WITHOUT importing the class for
- * identity (ticket 31): it exposes `updateContent`, holds a `contentContainer`
+ * identity: it exposes `updateContent`, holds a `contentContainer`
  * whose `children` is an array, and carries a thinking-block setter
  * (`setHiddenThinkingLabel`/`setHideThinkingBlock`) — a combination no other
  * component in the tree has.
@@ -381,7 +377,7 @@ const hiddenBlockIndices = new WeakMap<object, Set<number>>();
 
 /** Shallow-copy `message` with every registered hidden text block blanked.
  * Never mutates the passed message or its content array — it may be pi's own
- * stored object (the byte-identical-context constraint, tickets 22/26). */
+ * stored object (the byte-identical-context constraint). */
 function blankHiddenBlocks(instance: object, message: { content?: unknown }): { content?: unknown } {
 	const set = hiddenBlockIndices.get(instance);
 	const content = message?.content;
@@ -400,7 +396,7 @@ function blankHiddenBlocks(instance: object, message: { content?: unknown }): { 
 
 /**
  * Retroactively hide ONE text content block of a live AssistantMessageComponent
- * instance (ticket 41): rebuild the message through whatever updateContent is
+ * instance: rebuild the message through whatever updateContent is
  * CURRENTLY bound (original or spacer-patched) with `content[contentIndex]`'s
  * text blanked, so it renders zero rows exactly like a suppressed thinking run —
  * the ALREADY-INSTALLED spacer patch (if active) then strips its bordering
@@ -408,10 +404,9 @@ function blankHiddenBlocks(instance: object, message: { content?: unknown }): { 
  * keyed to message type. Used when a text block that streamed natively turns out
  * to be narration (something followed it), not the final answer.
  *
- * The hide is PERSISTENT for the instance's lifetime (owner bug report: a
- * one-shot blank was resurrected the moment the SAME message kept streaming —
- * thinking or a second text block after the narration re-renders the full
- * original content). The index is registered in hiddenBlockIndices and a
+ * The hide is PERSISTENT for the instance's lifetime: a one-shot blank would be
+ * resurrected the moment the SAME message kept streaming — thinking or a second
+ * text block after the narration re-renders the full original content. The index is registered in hiddenBlockIndices and a
  * per-instance updateContent wrapper (own property, shadows the prototype
  * method) blanks every registered block on EVERY future call, native or ours.
  * The wrapper resolves the prototype method at CALL time, so it composes with
@@ -421,7 +416,7 @@ function blankHiddenBlocks(instance: object, message: { content?: unknown }): { 
  * NEVER mutates `instance.lastMessage` or its `content` array in place — only a
  * shallow copy is passed to updateContent — so this is render-only and cannot
  * touch what pi persists or resends to the provider (the byte-identical-context
- * constraint, tickets 22/26). Returns false (no-op) when the instance, its
+ * constraint). Returns false (no-op) when the instance, its
  * message, or the indexed block don't look right — fails open rather than
  * risking a wrong removal.
  */
@@ -472,7 +467,7 @@ export function hideMessageTextBlock(instance: PatchTargetInstance, contentIndex
 }
 
 /**
- * Undo a hideMessageTextBlock (ticket 41 promotion): de-register the index so
+ * Undo a hideMessageTextBlock (narration promoted to the final answer): de-register the index so
  * the per-instance wrapper stops blanking it, then re-render with `text`
  * restored. The original text must be passed back in — pi's updateContent
  * stores the blanked copy as lastMessage, so the component itself no longer
@@ -498,7 +493,7 @@ export function restoreMessageTextBlock(instance: PatchTargetInstance, contentIn
 
 /**
  * Re-apply hideMessageTextBlock across an ENTIRE live tree, for every text
- * block whose trimmed content matches one of `texts` (ticket 41). Needed after
+ * block whose trimmed content matches one of `texts`. Needed after
  * ANY full transcript rebuild — compaction, /resume, /fork — rebuilds every
  * AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
  * (hideMessageTextBlock is render-only and never touches what's persisted, by
@@ -535,8 +530,7 @@ const SPACER_PROBE_WIDTH = 80;
 
 /**
  * Remove the dead blank spacers a render left around suppressed-thinking runs in
- * an instance's `contentContainer` (ticket 33). Generalizes the old
- * leading-only removal: strips leading AND trailing spacers bordering zero-row
+ * an instance's `contentContainer`. Strips leading AND trailing spacers bordering zero-row
  * thinking on ANY message shape ([thinking,text], [thinking,text,tool],
  * multi-run), while preserving the single paragraph margin real text needs
  * (suppressedThinkingSpacersToRemove). Safe: only Spacers are ever removed, and
@@ -553,7 +547,7 @@ export function stripSuppressedThinkingSpacers(instance: PatchTargetInstance, sp
 
 export interface LeadingSpacerPatchDeps {
 	/** The LIVE `AssistantMessageComponent.prototype` (from Object.getPrototypeOf
-	 * of a real instance — NOT an imported class, ticket 31). */
+	 * of a real instance — NOT an imported class). */
 	prototype: PatchTargetPrototype;
 	/** Optional live pi-tui `Spacer` class for an exact `instanceof` check; when
 	 * absent the leading child is duck-typed (isLeadingSpacer), which is
@@ -570,7 +564,7 @@ const PATCH_MARKER = Symbol.for("pi-activity-feed.leadingSpacerPatch");
 type MarkedPrototype = PatchTargetPrototype & { [PATCH_MARKER]?: LeadingSpacerPatch };
 
 /**
- * Install the guarded leading-Spacer patch on a LIVE prototype (tickets 30 + 31).
+ * Install the guarded leading-Spacer patch on a LIVE prototype.
  * Feature-detects the pi 0.85.1 `updateContent` shape and, on match, wraps it so a
  * message whose only visible raw content is suppressed thinking drops its leading
  * `Spacer(1)`. On any mismatch it fails open — returns `{ active: false, reason }`,
@@ -598,7 +592,7 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 	const patched = function (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]): unknown {
 		// Always let pi build the content tree first (unchanged behavior), then
 		// remove the dead blank spacers bordering any thinking run we suppressed —
-		// leading AND trailing, on any message shape (ticket 33), while keeping the
+		// leading AND trailing, on any message shape, while keeping the
 		// single paragraph margin real text needs.
 		const result = original.apply(this, [message, ...rest]);
 		if (!patch.active) return result;
@@ -627,7 +621,7 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 	return patch;
 }
 
-/** Result of acquiring + installing the patch from a live root (ticket 31). */
+/** Result of acquiring + installing the patch from a live root. */
 export interface AcquireLeadingSpacerResult {
 	patch: LeadingSpacerPatch;
 	/** The last live AssistantMessageComponent instance found (undefined when none
@@ -637,7 +631,7 @@ export interface AcquireLeadingSpacerResult {
 
 /**
  * Acquire a LIVE AssistantMessageComponent prototype from the running tree and
- * install the guarded leading-Spacer patch on it (ticket 31). Walks `root` (the
+ * install the guarded leading-Spacer patch on it. Walks `root` (the
  * captured TUI handle), duck-types the instances, derives the pi-tui `Spacer`
  * class from a real leading child when present, installs on
  * `Object.getPrototypeOf(instance)`, and — on success — retroactively drops the
@@ -662,7 +656,7 @@ export function acquireLeadingSpacerPatch(deps: { root: unknown; warn?: (message
 	if (patch.active) {
 		// Messages already rendered pre-patch keep the dead spacers their first
 		// updateContent added; strip them now across ALL existing components so
-		// nothing finalized during the `pending` window leaks (ticket 33 part 4).
+		// nothing finalized during the `pending` window leaks.
 		// (Subsequent updateContent calls run through the patched method already.)
 		for (const inst of instances) {
 			try {
@@ -677,7 +671,7 @@ export function acquireLeadingSpacerPatch(deps: { root: unknown; warn?: (message
 
 /** Derive the live pi-tui `Spacer` constructor from a real leading child, so the
  * wrapper's `instanceof` fast-path uses the class the bundle actually constructs
- * (ticket 31 — obtain the Spacer class the same live way). Falls back to
+ * (obtained the same live way as the prototype). Falls back to
  * undefined (duck-typing then covers it). */
 function deriveSpacerClass(instances: readonly PatchTargetInstance[]): Function | undefined {
 	for (const inst of instances) {
@@ -690,14 +684,14 @@ function deriveSpacerClass(instances: readonly PatchTargetInstance[]): Function 
 	return undefined;
 }
 
-// ── Debug instrumentation (ticket 34) ──────────────────────────────────────────
+// ── Debug instrumentation ──────────────────────────────────────────────────────
 // Env-gated, dormant by default. When PI_ACTIVITY_DEBUG=1, dumpTranscriptTree
 // walks the live chat tree from the captured TUI handle and appends, to
 // PI_ACTIVITY_DEBUG_LOG (default /tmp/activity-feed-debug.log), every top-level
 // child with its constructor name + rendered line count at the given width, and
 // for AssistantMessageComponent-like children their contentContainer children
-// too. This measures the REAL bundle components in a live session, ending the
-// probe(dist)-vs-bundle guessing (tickets 30-33).
+// too. This measures the REAL bundle components in a live session, which a
+// probe importing the unbundled dist cannot.
 function ctorName(v: unknown): string {
 	const c = (v as { constructor?: { name?: string } })?.constructor;
 	return (c && typeof c.name === "string" && c.name) || typeof v;
@@ -752,15 +746,14 @@ export function dumpTranscriptTree(root: unknown, width: number, label: string):
 	return out.join("\n");
 }
 
-// ── Universal tool-row absorption patch (owner issue: MCP / extension tool rows
+// ── Universal tool-row absorption patch (otherwise MCP / extension tool rows
 // render natively outside the card) ─────────────────────────────────────────────
 //
 // EVERY tool's native row — built-in, MCP-adapter, cursor-sdk, web-search,
 // anything any extension registered — renders through pi's
 // ToolExecutionComponent with its owner's renderers. Re-registering tools to
-// override rendering is off the table (owner decision: it blocked
-// pi-cursor-sdk's native tool replay and hard-conflicted with other display
-// extensions). Instead: one guarded patch on the LIVE
+// override rendering is off the table (it blocks pi-cursor-sdk's native tool
+// replay and hard-conflicts with other display extensions). Instead: one guarded patch on the LIVE
 // ToolExecutionComponent prototype (acquired from a real instance, so it works
 // against the minified bundle exactly like the AMC spacer patch) that renders
 // ZERO rows for any toolCallId the feed has absorbed. pi adds these components
@@ -883,7 +876,7 @@ export function acquireToolRowHidePatch(root: unknown, isAbsorbed: (toolCallId: 
 	return { installed: true };
 }
 
-// ── Tool-mount hook (owner issue: a native tool row flashes for a moment before
+// ── Tool-mount hook (otherwise a native tool row flashes for a moment before
 // absorption) ───────────────────────────────────────────────────────────────────
 //
 // Even with absorption at tool_execution_start, two windows let a frame paint:

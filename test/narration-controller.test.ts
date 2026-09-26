@@ -1,11 +1,9 @@
 /**
- * NarrationController lifecycle tests (ticket 41, review follow-up: owning
- * module). Previously trapped across index.ts + patches.ts and untested as a
- * unit. hide/restore/rehideAfterRebuild/findInstances are INJECTED (same
- * deps-injected pattern as ModalController), so these drive the orchestration
- * with plain stub functions instead of a real AssistantMessageComponent tree
- * — patches.ts's own hide/restore/rehide implementations stay covered by
- * test/patches.test.ts.
+ * NarrationController lifecycle tests. hide/restore/rehideAfterRebuild/
+ * findInstances are INJECTED (same deps-injected pattern as ModalController),
+ * so these drive the orchestration with plain stub functions instead of a real
+ * AssistantMessageComponent tree — patches.ts's own hide/restore/rehide
+ * implementations stay covered by test/patches.test.ts.
  */
 
 import assert from "node:assert/strict";

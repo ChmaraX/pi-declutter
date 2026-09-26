@@ -1,42 +1,38 @@
 /**
  * pi-activity-feed — v1 extension.
  *
- * Renders agent activity (tool calls + thinking) the way the Codex/Cursor GUI
- * apps do, using only supported pi extension APIs (no monkey-patching, no prompt
- * injection):
+ * Renders agent activity (tool calls + thinking) the way the Codex GUI does.
+ * No tools are re-registered and no prompts are injected; where the extension
+ * API cannot reach, a small set of guarded, fail-open runtime patches on pi
+ * internals fills the gap (see src/patches.ts):
  *
- *   • Built-in tool rows (read/bash/edit/write/grep/find/ls) are re-registered
- *     with the built-in execution preserved (we spread the exported
- *     create*ToolDefinition factory and override ONLY renderCall/renderResult):
- *     while a call runs its row is a single compact dim line; once the call is
- *     absorbed into a settled card the row renders ZERO lines and vanishes
- *     (renderShell:"self" ⇒ empty content collapses the whole component,
- *     ticket 01 §6.10). MCP/custom tool rows are left alone (other extensions
- *     own them) but are still counted in the card.
- *   • The activity card is the LIVE surface (Cursor behaviour, ticket 11): it is
+ *   • Native tool rows are absorbed into the card: a guarded mount hook hides
+ *     each tool execution component as it appears, so the card is the only
+ *     rendering of a call. MCP/custom tool rows are hidden and counted the
+ *     same way.
+ *   • The activity card is the LIVE surface (Cursor behaviour): it is
  *     appended EARLY — on the FIRST tool_execution_start of a response — so it
  *     lands ABOVE the streamed answer text (appendEntry inserts before the live
  *     streaming component; the final answer arrives in a later message appended
  *     below the card). It renders in its FINAL SHAPE from that first tool and
- *     grows in place (ticket 12): a ticking header "⟳ Working · Xs" with group
+ *     grows in place: a ticking header "⟳ Working · Xs" with group
  *     rows accumulating underneath (live bucket counts, a spinner on a running
  *     call). The whole shape — live and settled — is produced by the pure
  *     shapeCard() in src/card-shape.ts; ActivityCard just colours its segments.
  *     render() reads a mutable card model each frame and a captured
- *     tui.requestRender() (widget-factory trick, research §3) ticks it. There is
+ *     tui.requestRender() (widget-factory trick) ticks it. There is
  *     no separate live widget panel; the native working message
  *     (setWorkingMessage) still mirrors the bucket counter next to the editor.
- *   • Thinking is part of the card's ORDERED FLOW (tickets 20 + 21): the card is
+ *   • Thinking is part of the card's ORDERED FLOW: the card is
  *     a top-level sequence of Group entries and Thought entries in event order.
  *     A group is a run of consecutive tool calls; MEANINGFUL thinking (a run of
  *     consecutive spans totalling >= MIN_THOUGHT_MS) closes the open group and
  *     becomes its own Thought entry BETWEEN groups — so think→tools→think→tool
  *     renders in exactly that order. Sub-threshold thinking is ignored entirely
  *     (does not break a group, does not render), which absorbs the bursty 1–4 ms
- *     spans (spike finding 3). A Thought entry shows "· Thought Ns · <summary> ▸"
+ *     spans. A Thought entry shows "· Thought Ns · <summary> ▸"
  *     (span text captured via message_update thinking_delta, bounded ~2KB/span,
- *     coalesced) and expands to a bordered "Thinking" box (captured tail, no
- *     badge). Thinking is also LIVE like tool rows (ticket 23): once an in-progress
+ *     coalesced) and opens a floating modal with the full text. Thinking is also LIVE like tool rows: once an in-progress
  *     span exceeds MIN_THOUGHT_MS the grouper exposes it in snapshot() as a
  *     trailing live thought entry "⟳ Thinking… · Xs ▸" at its chronological position
  *     (closing the open group), ticked by the live timer; at thinking_end the SAME
@@ -49,51 +45,38 @@
  *     — so thinking never appears twice.
  *   • At agent_settled the SAME entry settles in place: ONLY the header changes
  *     to "▸ Worked for Xs" (anchored on the FIRST turn_start of the response) and
- *     the ticking stops — no other layout shift (ticket 12). The card keeps its
+ *     the ticking stops — no other layout shift. The card keeps its
  *     settled group labels accumulated across all its turns, ordered
  *     "Thought Ns" entries, and a failure count in the header (a deliberate
- *     deviation from Codex — ticket 18 — the one failure signal that survives
- *     the collapsed state). Failures do NOT auto-expand (Codex-faithful,
- *     ticket 18); the per-call signal is the output-box badge. After settle the
+ *     deviation from Codex — the one failure signal that survives the
+ *     collapsed state). Failures do NOT auto-expand (Codex-faithful); the per-call signal is the output-box badge. After settle the
  *     model is frozen (renders identical output), so no further repaints touch it.
- *   • The card is a four-level tree with PER-NODE expansion (ticket 16, atlas
- *     G1+G2): header → group rows → member rows → output box, each with a
+ *   • The card is a four-level tree with PER-NODE expansion: header → group rows → member rows → output box, each with a
  *     chevron (▸ collapsed / ▾ expanded). A left-click on the header cycles
  *     full-collapse ↔ default; a click on a group row toggles its members; a
- *     click on a member row toggles its output box (box body = the preview lines
- *     until ticket 17). Clicks are ON by default (opt out with
+ *     click on a member row opens a floating modal with the call's input and
+ *     output. Clicks are ON by default (opt out with
  *     --no-activity-mouse); shapeCard returns a parallel row-map (line → node id)
  *     so onCardMouse resolves the clicked node. The keyboard shortcut
  *     (ctrl+shift+a) is the fallback: it cycles the NEWEST card through
  *     full-collapse → default → all-expanded → back. Regular mode has no native
  *     mouse routing, so we enable SGR mouse reporting, parse the click packets
  *     from onTerminalInput, and synthesize a dispatch into the retained tree;
- *     fullscreen routes clicks natively via MouseRegion (ticket 09).
+ *     fullscreen routes clicks natively via MouseRegion.
+ *   • Built-in tool rows are absorbed into the card, and there is one card per
+ *     response (not per turn).
  *
- * Design provenance: tickets 01 (API), 02 (grouping), 03 (lifecycle),
- * 05 (label heuristics), 06 (live spike — ported patterns below),
- * 08 (absorb built-in rows + one card per response),
- * 11 (card above the answer), 12 (final card shape + previews),
- * 16 (four-level tree with per-node expansion + full-collapse state),
- * 18 (Codex-faithful failure handling: no auto-expand, failure = box badge),
- * 20 (thinking absorbed into the card stack: expandable Thought rows +
- * supported-lever native suppression).
- *
- * Ticket 08: the owner tested v1 interactively and overturned two ticket-03
- * defaults — raw green built-in tool rows staying visible, and one card per
- * turn. This version absorbs the built-in rows and emits one card per response.
- *
- * Key constraints honoured (from ticket 06 findings):
+ * Key constraints honoured:
  *   - Tool lifecycle events carry no timestamps → durations are self-measured
  *     (Date.now() at start → end), keyed by toolCallId.
  *   - "Worked for Xs" anchors on turn_start.timestamp → Date.now().
- *   - Groups break only on assistant text with non-whitespace content (ticket
- *     10); empty/whitespace text blocks, thinking, and turn boundaries do NOT
+ *   - Groups break only on assistant text with non-whitespace content;
+ *     empty/whitespace text blocks, thinking, and turn boundaries do NOT
  *     break, so sequential tool-only turns stay one group. The boundary logic is
  *     the pure, unit-tested Grouper in src/grouping.ts.
  *   - Thinking spans are bursty (some 1–4 ms) → a consecutive run coalesces into
  *     one "Thought Ns" entry, and runs whose total is sub-1s are ignored
- *     entirely (no entry, no group break) — ticket 21.
+ *     entirely (no entry, no group break).
  *   - turn_end AND agent_settled both fire → settle is idempotent.
  *   - Everything that touches UI is guarded by ctx.mode === "tui" && ctx.hasUI;
  *     it no-ops cleanly in print mode (which emits no tool events anyway).
@@ -199,11 +182,10 @@ import {
 	type ViewState,
 } from "./card-view.ts";
 
-// The real pi-tui Box/Text factory ActivityCard renders through (ticket 38
-// pattern extended to the card view, review follow-up): card-view.ts declares
-// only the structural CardBox/CardLine contracts so it stays unit-testable
-// without the pi-tui runtime; this is the one place those contracts meet the
-// real components, exactly as they were constructed before the extraction.
+// The real pi-tui Box/Text factory ActivityCard renders through: card-view.ts
+// declares only the structural CardBox/CardLine contracts so it stays
+// unit-testable without the pi-tui runtime; this is the one place those
+// contracts meet the real components.
 const cardRenderPrimitives: CardRenderPrimitives = {
 	makeBox: (bg) => new Box(1, 1, bg),
 	makeLine: (content) => new Text(content, 0, 0),
@@ -215,54 +197,51 @@ const cardRenderPrimitives: CardRenderPrimitives = {
 
 const CARD_TYPE = "activity-feed-summary";
 const TOGGLE_SHORTCUT = "ctrl+shift+a" as const;
-// The toggle shortcut used to print a persistent "Activity feed: <state>" line
-// into the transcript via notify() (ticket 19 noise): the chevron change is the
-// real feedback. Echo the new state on a transient, keyed footer status instead
-// and clear it after a moment so nothing sticks in the transcript.
+// The toggle shortcut does not notify() a persistent "Activity feed: <state>"
+// line into the transcript (noise): the chevron change is the real feedback.
+// It echoes the new state on a transient, keyed footer status instead and
+// clears it after a moment so nothing sticks in the transcript.
 const TOGGLE_STATUS_KEY = "activity-feed-toggle";
 const TOGGLE_STATUS_MS = 2000;
-// Live tick capped at 500ms (ticket 11 / research §3 limits): while the live card
+// Live tick capped at 500ms: while the live card
 // is still in the bottom viewport this is a cheap differential repaint, but once
 // it scrolls above the viewport each tick forces a full redraw that wipes native
 // scrollback — a low cadence bounds that cost. The timer only runs while tools
-// are executing OR a thinking span is active (ticket 23 shouldTick) — the
+// are executing OR a thinking span is active (shouldTick) — the
 // windows the card mutates.
 const LIVE_TICK_MS = 500;
 // CARD_BOX_PADDING_Y / CARD_BOX_PADDING_X (mouse-row mapping + wrap-width
-// constants) now live in card-view.ts alongside ActivityCard, which is the only
+// constants) live in card-view.ts alongside ActivityCard, which is the only
 // code that renders the Box they describe; onCardMouse below imports
 // CARD_BOX_PADDING_Y for its own y-offset math.
-// Per-thinking-span capture cap (ticket 20): ~2KB is enough for the summary line
+// Per-thinking-span capture cap: ~2KB is enough for the summary line
 // plus a 10-line tail box; anything beyond is dropped (bounded retention, like
 // the tool-output previews).
 const THINKING_BUF_MAX = 2048;
-// Per-call full-output capture cap for the modal (ticket 35): the inline preview
-// was ~8 lines; the modal shows the whole output, but stored capture stays bounded
-// at 64KB. Larger truncated command output lives in a temp file (fullOutputPath)
+// Per-call full-output capture cap for the modal: the modal shows the whole
+// output, but stored capture stays bounded at 64KB. Larger truncated command output lives in a temp file (fullOutputPath)
 // read lazily on open, so this cap only bounds in-memory retention.
 const MAX_MODAL_CAPTURE = 64 * 1024;
-// Transient "Copied to clipboard" status after `c` in a modal (ticket 35).
+// Transient "Copied to clipboard" status after `c` in a modal.
 
-// Zero-line widget that captures the live TUI handle (research §3 widget-factory
-// trick) so the card can request global re-renders; also the anchor for opt-in
-// mouse reporting (ticket 09). Registered in every live-UI session.
+// Zero-line widget that captures the live TUI handle (widget-factory trick) so
+// the card can request global re-renders; also the anchor for opt-in mouse
+// reporting. Registered in every live-UI session.
 const CAPTURE_WIDGET_KEY = "activity-feed-capture";
-// Click-to-toggle is ON by default (ticket 12 req 4, owner decision); pass
-// --no-activity-mouse to opt out (Shift/Option-drag still selects natively).
+// Click-to-toggle is ON by default; pass --no-activity-mouse to opt out (Shift/Option-drag still selects natively).
 const NO_MOUSE_FLAG = "no-activity-mouse";
 // Regular-mode SGR mouse reporting (enable/disable escapes), the RegularTui
-// captureRenderState() type, and all packet-to-dispatch resolution now live in
-// MouseController (src/mouse-controller.ts), extracted from this closure so the
-// mouse protocol handling is unit-testable with a fake TUI (test/mouse-
-// controller.test.ts). The underlying pure SGR packet parsing stays in the
+// captureRenderState() type, and all packet-to-dispatch resolution live in
+// MouseController (src/mouse-controller.ts), so the mouse protocol handling is
+// unit-testable with a fake TUI (test/mouse-controller.test.ts). The underlying pure SGR packet parsing stays in the
 // dependency-free ./mouse.ts, which MouseController uses.
 
 // ── Data shapes ──────────────────────────────────────────────────────────────
 
 /**
- * Mutable, render-ready model stored (by reference) on the appended entry
- * (ticket 11). While the response is active `live` is true and the card renders
- * the rolling counter; the model is mutated as tools run and a captured
+ * Mutable, render-ready model stored (by reference) on the appended entry.
+ * While the response is active `live` is true and the card renders the
+ * rolling counter; the model is mutated as tools run and a captured
  * tui.requestRender() ticks the card. At agent_settled the model is frozen
  * (`live: false`, `entries` finalized) so every subsequent render is identical
  * and no further repaints touch it. It is the same object appendEntry received,
@@ -281,7 +260,7 @@ function extractExitCode(text: string): number | undefined {
 	return match ? Number(match[1]) : undefined;
 }
 
-/** Extract the joined text blocks of a tool result (ticket 12 req 5). */
+/** Extract the joined text blocks of a tool result. */
 function extractResultText(result: unknown): string {
 	if (!result || typeof result !== "object") return "";
 	const content = (result as { content?: unknown }).content;
@@ -304,7 +283,7 @@ function extractResultText(result: unknown): string {
 // loader parity — the extension is loaded through pi's jiti runtime, which
 // resolves CJS require() paths pi itself relies on; hoisted here so the two
 // call sites (readFullOutput, the debug-dump path below) share one require
-// instead of repeating it inline (finding 24).
+// instead of repeating it inline.
 function nodeFs(): typeof import("node:fs") {
 	return require("node:fs") as typeof import("node:fs");
 }
@@ -320,7 +299,7 @@ function nodePathModules(): { os: typeof import("node:os"); path: typeof import(
 }
 
 /**
- * Resolve the full output text for a member's modal (ticket 35). Prefers the
+ * Resolve the full output text for a member's modal. Prefers the
  * bash/powershell temp file (`fullOutputPath`) that holds the UNTRUNCATED output
  * when the command truncated it; falls back to the bounded in-memory capture.
  * The file read is best-effort and bounded — a missing/oversized file falls back
@@ -331,7 +310,7 @@ function readFullOutput(item: ShapeItem): string | undefined {
 	if (item.fullOutputPath) {
 		try {
 			const fs = nodeFs();
-			// BOUNDED read (ticket 35 review P1): fullOutputPath is written precisely
+			// BOUNDED read: fullOutputPath is written precisely
 			// when the command TRUNCATED, so the file holds large untruncated output.
 			// readFileSync would pull the whole file into memory before slicing —
 			// blocking the event loop and risking OOM on the exact modal path. Read at
@@ -399,10 +378,10 @@ interface Runtime {
 
 // A zero-line widget whose only jobs are to capture the live TUI handle — the
 // widget factory is one of the few places an extension is handed the TUI object
-// (research §3 mechanism 3) — and, when the mouse flag is set, turn on SGR mouse
+// — and, when the mouse flag is set, turn on SGR mouse
 // reporting. The captured handle drives tui.requestRender() for the live card
-// (ticket 11) and the toggle shortcut. Renders nothing, so it never occupies a
-// line. There is no separate live-counter widget anymore: the transcript card
+// and the toggle shortcut. Renders nothing, so it never occupies a
+// line. There is no separate live-counter widget: the transcript card
 // is the live surface.
 class CaptureWidget implements Component {
 	constructor(tui: TUI, runtime: Runtime, onTui: (tui: TUI) => void) {
@@ -425,9 +404,9 @@ class CaptureWidget implements Component {
 // ── Extension ────────────────────────────────────────────────────────────────
 
 export default function activityFeed(pi: ExtensionAPI): void {
-	// Click-to-toggle is ON by default (ticket 12 req 4, owner decision). Enabling
+	// Click-to-toggle is ON by default. Enabling
 	// mouse reporting in regular mode intercepts the terminal's own click-drag
-	// selection and wheel scroll (ticket 09) — Shift/Option-drag still selects
+	// selection and wheel scroll — Shift/Option-drag still selects
 	// natively — so --no-activity-mouse opts out. The keyboard shortcut is always on.
 	pi.registerFlag(NO_MOUSE_FLAG, {
 		type: "boolean",
@@ -436,10 +415,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	});
 	const mouseEnabled = pi.getFlag(NO_MOUSE_FLAG) !== true;
 
-	// ── Native thinking suppression (ticket 20) ────────────────────────────────
-	// The owner wants thinking to live inside the card's grouped stack, not float
-	// outside it as pi's native "Planning…" / "Confirming…" block. The only
-	// supported levers (research §2; no monkey-patching) are a markdown transformer
+	// ── Native thinking suppression ────────────────────────────────────────────
+	// Thinking lives inside the card's grouped stack, not floating outside it as
+	// pi's native "Planning…" / "Confirming…" block. The only supported levers
+	// are a markdown transformer
 	// on "assistant-thinking" and setHiddenThinkingLabel. The transformer fires in
 	// the SHOWN branch of AssistantMessageComponent for BOTH streaming and settled
 	// renders (assistant-message.js:88-118), so returning "" blanks the native
@@ -448,28 +427,26 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// placeholder shown after ctrl+t hides thinking. The decision is the pure,
 	// unit-tested suppressThinkingMarkdown (card-shape.ts).
 	//
-	// Residual blank lines (tickets 22 + 26 investigation): AssistantMessageComponent
+	// Residual blank lines: AssistantMessageComponent
 	// adds Spacer(1) siblings around a thinking run from the RAW pre-transform content
 	// it cannot see us rewrite — a LEADING Spacer whenever the message has any visible
 	// raw content, incl. a message whose only visible block is thinking
 	// (assistant-message.js:74-77), and a TRAILING Spacer when visible content follows
-	// the run (assistant-message.js:120-127). Ticket 26 root cause: a big task is
+	// the run (assistant-message.js:120-127). A big task is
 	// dozens of SEPARATE assistant messages of shape [thinking, toolCall…] (thinking +
 	// tools, no visible text). Each is its own AssistantMessageComponent; the thinking
 	// body renders 0 lines (transformer) and every built-in tool row renders 0 lines
 	// INCLUDING its own constructor Spacer (renderShell:"self" ⇒
 	// ToolExecutionComponent.render() returns [] when the self-render container is
 	// empty, tool-execution.js:176-198) — yet each message still emits its ONE leading
-	// Spacer keyed off the raw thinking. So a 40-message response stacked 40 blank
-	// lines (the owner's 16:38 audit).
+	// Spacer keyed off the raw thinking. So a 40-message response would stack 40
+	// blank lines.
 	//
-	// Ticket 30 removes that last blank with a GUARDED RUNTIME PATCH (src/patches.ts,
-	// installed in session_start below, TUI only): once the owner lifted the
-	// no-monkey-patching constraint (map "Out of scope", pi-cc-extensions precedent),
-	// the leading Spacer for a suppressed-thinking-only message is dropped from the
+	// A GUARDED RUNTIME PATCH removes that last blank (src/patches.ts, installed in
+	// session_start below, TUI only; pi-cc-extensions precedent): the leading Spacer for a suppressed-thinking-only message is dropped from the
 	// render tree AFTER pi builds it — never touching the stored/resent message, so
-	// the byte-identical constraint that forbade the message_end route (ticket 26)
-	// still holds. It is feature-detected + fail-open: on a pi shape drift it no-ops
+	// the byte-identical constraint that rules out editing at message_end still
+	// holds. It is feature-detected + fail-open: on a pi shape drift it no-ops
 	// and the 40-blank floor returns (blank-probe drift canary). Messages with visible
 	// text keep normal paragraph spacing; the empty [] final message renders 0 lines.
 	// ctrl+t interaction: the transformer blanks the shown state and the label blanks
@@ -480,14 +457,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// Per-response mutable state (accumulated across all turns of one agent
 	// response, agent_start → agent_settled).
 	const ledger = new Map<string, ToolCall>();
-	// Pure group-boundary state machine (ticket 10): groups break only on
+	// Pure group-boundary state machine: groups break only on
 	// assistant text with non-whitespace content, never on turn boundaries.
 	const grouper = new Grouper<ToolCall>();
 	/** Anchored on the FIRST turn_start of the response; 0 until that fires. */
 	let responseStartMs = 0;
 	let runningTools = 0;
 	let thinkingStartMs: number | undefined;
-	// Text streamed for the CURRENT thinking span, bounded to ~2KB (ticket 20):
+	// Text streamed for the CURRENT thinking span, bounded to ~2KB:
 	// enough for a summary line + a 10-line tail box, negligible retention. Reset
 	// on thinking_start, flushed into the group on thinking_end.
 	let thinkingBuf = "";
@@ -499,10 +476,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// cleared — a hidden row must stay hidden for the transcript's life). Ids are
 	// added at tool_execution_start so the native row never paints a frame; the
 	// ToolExecutionComponent render patch (patches.ts) is the ONLY hiding
-	// mechanism — this extension registers NO tools. Deliberate (owner decision):
-	// re-registering built-ins made pi-cursor-sdk skip its native tool replay
-	// ("name already owned by another extension") and fall back to thinking-text
-	// transcripts, and it hard-conflicted with other display extensions.
+	// mechanism — this extension registers NO tools. Deliberate: re-registering
+	// built-ins makes pi-cursor-sdk skip its native tool replay ("name already
+	// owned by another extension") and fall back to thinking-text transcripts,
+	// and it hard-conflicts with other display extensions.
 	const absorbed = new Set<string>();
 
 	// UI-lifecycle state.
@@ -510,27 +487,27 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	let liveTimer: ReturnType<typeof setInterval> | undefined;
 	const runtime: Runtime = { tui: undefined };
 	const view: ViewState = { cards: new Map(), models: new Map(), order: [] };
-	// Last rendered line-index → node-id map per card, for mouse resolution (ticket 16).
+	// Last rendered line-index → node-id map per card, for mouse resolution.
 	const rowMaps = new Map<string, string[]>();
-	// Current mouse-hovered node (ticket 24). Read by every ActivityCard each frame;
+	// Current mouse-hovered node. Read by every ActivityCard each frame;
 	// written only by commitHover (the render throttle) and cleared on leave/settle/
 	// teardown. Empty while the mouse is off every card or --no-activity-mouse is set.
 	const hover: HoverState = {};
 
-	// The live card model for the CURRENT response (ticket 11). Appended on the
+	// The live card model for the CURRENT response. Appended on the
 	// first tool_execution_start, mutated as tools run, frozen at settle. Undefined
 	// between responses (and once frozen, so no further mutation touches it).
 	let cardModel: CardModel | undefined;
 	let cardAppended = false;
 
-	// ── In-memory card registry (ticket 25 layer 1) ────────────────────────────
+	// ── In-memory card registry ────────────────────────────────────────────────
 	// The renderer PREFERS these in-memory models over the persisted entry.data
 	// snapshot. `liveModels` holds every model object this process appended (live,
 	// settled, or re-appended): entry.data is the SAME object by reference in-process
 	// (pi does not clone appendEntry data — session-manager.js appendCustomEntry), so
 	// membership discriminates "our live/settled model" from "a persisted snapshot
 	// deserialized on a fresh-process resume". We do not RELY on the reference being
-	// stable across in-process rebuilds (the ticket's caution): even if pi ever
+	// stable across in-process rebuilds: even if pi ever
 	// handed back a different object, `view.models` (keyed by entry id, populated on
 	// first render) keeps the correct model, and a resumed snapshot is rendered
 	// gracefully as settled either way. Ids in `staleCards` are rendered from a
@@ -538,24 +515,24 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// they never flip into a ticking ghost on a later render.
 	const liveModels = new WeakSet<CardModel>();
 	const staleCards = new Set<string>();
-	// Compaction survival (ticket 25 layer 2): the set of dropped card entries we
+	// Compaction survival: the set of dropped card entries we
 	// have already re-appended (dedup — one response never yields two cards).
 	const reappendedFrom = new Set<string>();
 
 	// Capture-widget / mouse state.
 	let captureShown = false;
-	// Transient toggle-status clear timer (ticket 19).
+	// Transient toggle-status clear timer.
 	let toggleStatusTimer: ReturnType<typeof setTimeout> | undefined;
 	let mouseUnsub: (() => void) | undefined;
 
 	const hasLiveUI = (ctx: ExtensionContext): boolean => ctx.mode === "tui" && ctx.hasUI;
 
-	// Guarded leading-Spacer patch (tickets 30 + 31): acquired LAZILY from the first
-	// LIVE AssistantMessageComponent instance in the running tree (patching the
-	// imported class had no live effect — the CLI runs the bundle, ticket 31), applied
-	// ONCE per TUI session, torn down at shutdown (ticket 38: owned by PatchController).
+	// Guarded leading-Spacer patch: acquired LAZILY from the first LIVE
+	// AssistantMessageComponent instance in the running tree (patching the imported
+	// class has no live effect — the CLI runs the bundle), applied ONCE per TUI
+	// session, torn down at shutdown (owned by PatchController).
 	const patchController = new PatchController(runtime, hasLiveUI);
-	// Narration lifecycle (ticket 41, review follow-up: owning module): pending
+	// Narration lifecycle: pending
 	// capture at text_end → confirm-hide → promote/restore at settle → rehide on
 	// transcript rebuild, all owned by NarrationController (src/narration-
 	// controller.ts). Deps-injected (same pattern as ModalController) so the
@@ -567,10 +544,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		findInstances: findAssistantMessageComponents,
 		requestRender: () => runtime.tui?.requestRender(),
 	});
-	// Regular-mode SGR mouse reporting + click/hover-to-card resolution (ticket 09/24,
-	// split out ticket TBD): owned by MouseController, which shares the same `runtime`
-	// handle and calls back into commitHover/clearHover below (function declarations,
-	// hoisted, so referencing them here before their textual definition is safe).
+	// Regular-mode SGR mouse reporting + click/hover-to-card resolution: owned by
+	// MouseController, which shares the same `runtime` handle and calls back into
+	// commitHover/clearHover below (function declarations, hoisted, so referencing
+	// them here before their textual definition is safe).
 	const mouseController = new MouseController({
 		runtime,
 		commitHover: (cardId, nodeId) => commitHover(cardId, nodeId),
@@ -593,14 +570,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	/** Start a fresh agent response. Absorbed rows persist (session-lived set).
 	 *
-	 * CATCH-ALL force-settle (ticket 32 point 1): before dropping the previous
+	 * CATCH-ALL force-settle: before dropping the previous
 	 * response's state, force-settle any card that is STILL live. A stream error
 	 * (assistant stopReason "error") is retryable, and pi's retry runs as a fresh
 	 * agent loop that emits a NEW agent_start (agent-loop.js runAgentLoopContinue)
 	 * WITHOUT ever delivering a settle for the errored card — so the previous card
-	 * would be orphaned on "⟳ Thinking…" forever (the 2026-09-20 evidence session:
-	 * line 74 stopReason=error mid-thinking, line 75 a fresh live card). Settling
-	 * here, at the exact boundary where the next response begins, guarantees AT MOST
+	 * would be orphaned on "⟳ Thinking…" forever. Settling here, at the exact boundary where the next response begins, guarantees AT MOST
 	 * ONE live card regardless of which events the error path skipped. Idempotent:
 	 * settleResponse() drops cardModel via clearLive(), so a card already settled by
 	 * the direct message_end/agent_end handling below is a no-op here. Runs BEFORE
@@ -618,13 +593,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		cardModel = undefined;
 		cardAppended = false;
 		// A pending narration from the PREVIOUS response is moot for a fresh one
-		// (ticket 41) — drop it without hiding (its native rendering, if it was
+		// — drop it without hiding (its native rendering, if it was
 		// genuinely the previous response's final answer, must stay untouched).
 		narrationController.reset();
 	}
 
 	/**
-	 * Flush an OPEN thinking span into the grouper (ticket 32 point 3). On a normal
+	 * Flush an OPEN thinking span into the grouper. On a normal
 	 * settle thinking_end already fired, so thinkingStartMs is undefined and this is
 	 * a no-op. On an abnormal end the stream died mid-thinking (no thinking_end), so
 	 * the in-progress span is captured here — its elapsed time + the partial streamed
@@ -640,14 +615,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		thinkingBuf = "";
 	}
 
-	/** Force-settle the current card as INTERRUPTED if it is still live (ticket 32).
+	/** Force-settle the current card as INTERRUPTED if it is still live.
 	 * The single guarded entry point for the catch-all + the direct abnormal-end
 	 * handlers; a no-op when no live card exists (already settled, or none appended). */
 	function forceSettleLingering(): void {
 		if (cardModel && cardModel.live) settleResponse(true);
 	}
 
-	/** Direct abnormal-end handling (ticket 32 point 2): settle the live card the
+	/** Direct abnormal-end handling: settle the live card the
 	 * moment an assistant message ends with an error/abort stopReason, so the
 	 * "· interrupted" marker appears immediately instead of only at the next
 	 * response's agent_start. Only "error"/"aborted" are abnormal — "stop"/"toolUse"/
@@ -676,9 +651,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// EVERY tool's native row (built-in, MCP, extension) is hidden by ONE guarded
 	// prototype patch on pi's ToolExecutionComponent, driven by the shared
 	// `absorbed` set; ids are added at tool_execution_start so rows never paint a
-	// frame. The old ticket-08 re-registration mechanism is gone (owner decision:
-	// it blocked pi-cursor-sdk's native tool replay and hard-conflicted with
-	// other display extensions). Fail-open: while the patch is not installed,
+	// frame. Tools are deliberately NOT re-registered (that blocks pi-cursor-sdk's
+	// native tool replay and hard-conflicts with other display extensions). Fail-open: while the patch is not installed,
 	// rows render natively (pi default) — noisier but fully functional.
 	let toolRowPatchInstalled = false;
 	/** FALLBACK acquisition only (called from the session_start sweep). The
@@ -705,7 +679,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		});
 	}
 
-	// ── Live card plumbing (ticket 11) ────────────────────────────────────────
+	// ── Live card plumbing ────────────────────────────────────────────────────
 	/**
 	 * Append the activity card EARLY — on the first tool_execution_start of the
 	 * response — so it lands ABOVE the streamed answer text (appendEntry inserts
@@ -731,10 +705,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	}
 
 	/**
-	 * Append a card entry AND register its model in the in-memory registry
-	 * (ticket 25 layer 1). Membership in `liveModels` marks the object as ours (so
-	 * the renderer never mistakes an in-process model for a stale persisted
-	 * snapshot); `view.models` is keyed by the new entry's id (the session leaf after
+	 * Append a card entry AND register its model in the in-memory registry.
+	 * Membership in `liveModels` marks the object as ours (so the renderer never
+	 * mistakes an in-process model for a stale persisted snapshot); `view.models` is keyed by the new entry's id (the session leaf after
 	 * the synchronous appendCustomEntry — agent-session.js appendEntry) so the renderer
 	 * and keyboard shortcut resolve the model without waiting for the first render.
 	 */
@@ -745,7 +718,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (id) view.models.set(id, model);
 	}
 
-	/** The in-progress thinking span for the live card (ticket 23): elapsed ms +
+	/** The in-progress thinking span for the live card: elapsed ms +
 	 * the current streamed buffer. Undefined when no thinking span is active. The
 	 * buffer is passed by reference each tick (never retained by the grouper); the
 	 * card copies only a bounded tail. */
@@ -755,20 +728,20 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	}
 
 	/** True while a thinking span is streaming (drives the tick condition + the
-	 * live thought row) — ticket 23. */
+	 * live thought row). */
 	function thinkingActive(): boolean {
 		return thinkingStartMs !== undefined;
 	}
 
 	function refreshLive(): void {
-		// The snapshot exposes the open group at the tail (ticket 21 rule 6) AND a
-		// suprathreshold in-progress thinking run as a trailing live thought entry
-		// (ticket 23). Passing the live span lets that entry appear/tick before the
+		// The snapshot exposes the open group at the tail AND a
+		// suprathreshold in-progress thinking run as a trailing live thought entry.
+		// Passing the live span lets that entry appear/tick before the
 		// span closes; buildCardEntries marks it live so its row shows "Thinking… · Xs".
 		const live = liveThinking();
 		const snapshot = grouper.snapshot(live);
 		// Append the card as soon as there is live content — the first tool's open
-		// group OR a suprathreshold thinking run (ticket 23) — so it sits above the
+		// group OR a suprathreshold thinking run — so it sits above the
 		// answer. Idempotent (cardAppended guard).
 		if (snapshot.length > 0) ensureCard();
 		if (cardModel) {
@@ -781,7 +754,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			cardModel.failures = shaped.failures;
 
 			// The native working message beside the editor still mirrors the bucket
-			// counter (the card header itself now shows just "⟳ Working · Xs").
+			// counter (the card header itself shows just "⟳ Working · Xs").
 			const calls = Array.from(ledger.values(), toCallLike);
 			const details = calls.length > 0 ? bucketCountsText(calls) : "";
 			if (uiCtx) uiCtx.ui.setWorkingMessage(details ? `Working · ${details}` : "Working");
@@ -796,7 +769,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// Freeze a live card that finalized with nothing renderable (unreachable
 	// today — any tool ⇒ ≥1 entry) so clearLive() cannot orphan a ⟳ Exploring line;
 	// an interrupted force-settle stamps the marker so it reads "· interrupted"
-	// rather than feigning completion (ticket 32 / 37).
+	// rather than feigning completion.
 	function freezeEmptyCard(interrupted: boolean): void {
 		if (cardModel) {
 			// The last live snapshot may still hold the final answer as narration;
@@ -819,7 +792,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	function clearLive(): void {
 		stopTimer();
 		cardModel = undefined;
-		// Clear any hover highlight at settle (ticket 24): the card re-renders into its
+		// Clear any hover highlight at settle: the card re-renders into its
 		// finalized shape here, where node ids may shift, so a stale lit row is wrong.
 		clearHover();
 		if (uiCtx) uiCtx.ui.setWorkingMessage();
@@ -842,14 +815,14 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// Regular mode does not route mouse events to components (the terminal owns
 	// scrollback), so we enable SGR button reporting ourselves, parse the packets
 	// from onTerminalInput, and synthesize a TUI mouse dispatch that the retained
-	// component tree resolves to the clicked card (ticket 09; technique ported from
+	// component tree resolves to the clicked card (technique ported from
 	// pi-cc-extensions renderer/mouse, no shared code). In fullscreen the TUI routes
 	// clicks natively straight to each card's MouseRegion, so we skip all of this.
-	/** Apply a click on one node (tickets 16 + 21): header cycles full-collapse ↔
-	 * default; a group entry toggles its members; a thought entry toggles its
-	 * "Thinking" box; a member toggles its output box. Indices are top-level. */
+	/** Apply a click on one node: header cycles full-collapse ↔ default; a
+	 * group entry toggles its members; a thought or member entry opens its
+	 * floating modal. Indices are top-level. */
 	/** Set the hovered card/node, re-rendering ONLY when it actually changes
-	 * (ticket 24 throttle): motion reports are dense, but a move within the same row
+	 * (throttle): motion reports are dense, but a move within the same row
 	 * (or off every card while already cleared) does nothing. Passing undefined ids
 	 * clears the hover (leave). Delegates to card-view.ts's pure commitHover, which
 	 * owns the throttle logic; this wrapper just supplies the live requestRender. */
@@ -857,7 +830,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		cardViewCommitHover(hover, cardId, nodeId, () => runtime.tui?.requestRender());
 	}
 
-	/** Clear any hover highlight (ticket 24): on card settle re-render + teardown, so
+	/** Clear any hover highlight: on card settle re-render + teardown, so
 	 * a finalized card (whose node ids may have shifted) never keeps a stale row lit. */
 	function clearHover(): void {
 		cardViewClearHover(hover, () => runtime.tui?.requestRender());
@@ -877,30 +850,29 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				toggleInSet(cv.membersVisible, node.entryIndex);
 				break;
 			case "thought":
-				// Ticket 35: a thought row opens the floating "Thinking" modal instead of
+				// A thought row opens the floating "Thinking" modal instead of
 				// an inline box. Renders nothing new in the tree, so no requestRender.
 				modalController.openThoughtModal(id, node.entryIndex);
 				return;
 			case "narration":
-				// Ticket 41: a narration row opens the floating modal with its full text.
+				// A narration row opens the floating modal with its full text.
 				modalController.openNarrationModal(id, node.entryIndex);
 				return;
 			case "member":
-				// Ticket 35: a member row opens the floating output modal.
+				// A member row opens the floating output modal.
 				modalController.openMemberModal(id, node.entryIndex, node.itemIndex);
 				return;
 		}
 		runtime.tui?.requestRender();
 	}
 
-	// ── Floating output modal (ticket 35) ─────────────────────────────────────────
+	// ── Floating output modal ─────────────────────────────────────────────────────
 	// Clicking a member/thought row opens a focused overlay (ctx.ui.custom overlay)
-	// showing the FULL output/thinking text, scrollable and copyable, instead of the
-	// old inline ASCII box. Only one modal at a time: opening another closes the
+	// showing the FULL output/thinking text, scrollable and copyable. Only one modal at a time: opening another closes the
 	// current one first (handle.hide()), then shows the new content. The handle is
 	// also hidden on teardown / settle-abort so no overlay outlives its card.
-	// Modal lifecycle (open/swap/copy/close/teardown) is owned by ModalController
-	// (ticket 38); it reads the live model + UI context through injected accessors.
+	// Modal lifecycle (open/swap/copy/close/teardown) is owned by ModalController;
+	// it reads the live model + UI context through injected accessors.
 	const modalController = new ModalController({
 		getUiCtx: () => uiCtx,
 		hasLiveUI,
@@ -922,7 +894,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		const rowIndex = event.y - CARD_BOX_PADDING_Y;
 		const node = rowMap ? hoveredNodeAt(rowMap, rowIndex) : undefined;
 
-		// Hover (ticket 24): a move over this card sets the hovered node (or clears
+		// Hover: a move over this card sets the hovered node (or clears
 		// it on the card's own padding rows). Always record AND commit — the
 		// synthesized regular-mode caller re-commits the record afterwards (same
 		// values, idempotent) so a move over NO card can clear hover; fullscreen
@@ -943,10 +915,10 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	/**
 	 * Register the zero-line capture widget in every live-UI session so the live
-	 * card and toggle shortcut always have a tui.requestRender() handle (ticket 11
-	 * — there is no live-counter widget to capture it anymore). Unless
+	 * card and toggle shortcut always have a tui.requestRender() handle
+	 * (there is no live-counter widget to capture it). Unless
 	 * --no-activity-mouse is set the same widget also turns on SGR mouse reporting
-	 * and we subscribe to raw terminal input for click-to-toggle (ticket 09/12).
+	 * and we subscribe to raw terminal input for click-to-toggle.
 	 */
 	function setupCapture(ctx: ExtensionContext): void {
 		if (captureShown) return;
@@ -963,7 +935,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		mouseUnsub?.();
 		mouseUnsub = undefined;
 		mouseController.teardown(); // disables SGR reporting + resets residual/hover
-		modalController.closeModal(); // ticket 35: no overlay outlives its card
+		modalController.closeModal(); // no overlay outlives its card
 		if (uiCtx && captureShown) {
 			try {
 				uiCtx.ui.setWidget(CAPTURE_WIDGET_KEY, undefined);
@@ -977,22 +949,22 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ── Settle one agent response into its card (idempotent) ──────────────────
 	// Called at agent_settled; accumulates every turn's groups. turn_end only
 	// flushes the open group, it does not settle — so one card covers the whole
-	// response (ticket 08), anchored on the first turn_start (responseStartMs).
-	// The card was already appended live on the first tool (ticket 11); here we
+	// response, anchored on the first turn_start (responseStartMs).
+	// The card was already appended live on the first tool; here we
 	// FREEZE that same model in place (live → false, groups finalized) so it
 	// settles into the collapsed "Worked for Xs" card and never mutates again.
 	function settleResponse(interrupted = false): void {
-		// Close any open thinking span first (ticket 32): on a normal settle this is a
+		// Close any open thinking span first: on a normal settle this is a
 		// no-op, but on an abnormal end (stream died mid-thinking) it captures the
 		// in-progress span so the interrupted card preserves its partial thought.
 		flushOpenThinking();
 		const { entries: finalEntries, finalAnswer, promoted } = grouper.finalize();
 		// Whatever the pending narration block pointed at is now resolved either way
 		// (folded into finalEntries as a narration entry, or popped out as the final
-		// answer) — promotion (owner bug: Cursor trails thinking/tool dumps AFTER the
-		// real answer, and a turn can end on tool calls) restores the matching hidden
+		// answer) — promotion (Cursor trails thinking/tool dumps AFTER the real
+		// answer, and a turn can end on tool calls) restores the matching hidden
 		// block's native rendering so the response is never visibly answerless
-		// (NarrationController.settle, ticket 41 — review follow-up: owning module).
+		// (NarrationController.settle).
 		narrationController.settle(finalAnswer, promoted);
 
 		if (finalEntries.length === 0) {
@@ -1021,13 +993,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// avoiding a scrollback wipe). Re-absorb here in case any call finished after
 		// the last turn_end but before settle; the subsequent clearLive() issues the
 		// requestRender. Idempotent (absorbed is a Set); custom/MCP ids are inert.
-		// Same teardown parity for interrupted cards (ticket 32 point 4).
+		// Same teardown parity for interrupted cards.
 		for (const id of settledIds) absorbed.add(id);
 
 		if (action === "settle-live" && cardModel) {
 			// Settle the live card in place: same entry, now the collapsed "Worked for
 			// Xs" card. This is the last write to the model — clearLive() then drops our
-			// reference and stops the timer, so nothing repaints it again (ticket 11).
+			// reference and stops the timer, so nothing repaints it again.
 			cardModel.workedMs = workedMs;
 			cardModel.failures = failures;
 			cardModel.entries = cardEntries;
@@ -1036,7 +1008,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		} else {
 			// No tool ran this response (e.g. a long thinking-only turn), so no live
 			// card was appended. Emit a settled card now; it lands after the answer,
-			// which is acceptable for the rare tool-less case (ticket 11 residual note).
+			// which is acceptable for the rare tool-less case.
 			const frozen: CardModel = {
 				live: false,
 				startMs: responseStartMs || Date.now(),
@@ -1056,8 +1028,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// A modal opened on a still-live row shows that row's final content.
 		modalController.refresh();
 
-		// Debug (ticket 34): env-gated live transcript dump — measures the REAL
-		// bundle components so we stop guessing dist-vs-bundle. Off by default.
+		// Debug: env-gated live transcript dump — measures the REAL bundle
+		// components rather than the unbundled dist. Off by default.
 		if (process.env.PI_ACTIVITY_DEBUG === "1" && runtime.tui) {
 			try {
 				const fs = nodeFs();
@@ -1073,8 +1045,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer<CardModel>(
 		CARD_TYPE,
 		(entry: CustomEntry<CardModel>, options: EntryRenderOptions, theme: Theme): Component | undefined => {
-			// Prefer the in-memory registry over the persisted snapshot (ticket 25 layer
-			// 1). In-process the registry holds the live/settled model we mutate; only a
+			// Prefer the in-memory registry over the persisted snapshot.
+			// In-process the registry holds the live/settled model we mutate; only a
 			// fresh-process resume misses it, and then entry.data is the persisted
 			// snapshot (frozen at append time — stale for a card saved mid-response).
 			let model = view.models.get(entry.id);
@@ -1088,7 +1060,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				} else {
 					// Fresh-process persisted snapshot: render it settled/graceful and mark
 					// the id stale for the process lifetime so a later render never flips it
-					// into a ticking live ghost (ticket 25 layer 3).
+					// into a ticking live ghost.
 					model = persisted;
 					staleCards.add(entry.id);
 				}
@@ -1097,23 +1069,23 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			if (!view.cards.has(entry.id)) view.order.push(entry.id);
 			syncNativeExpansion(model, getCardView(view, entry.id), options.expanded);
 			const stale = staleCards.has(entry.id);
-			// A failure no longer auto-expands the card (ticket 18, Codex-faithful):
+			// A failure does not auto-expand the card (Codex-faithful):
 			// failures stay calm — the per-call signal is the output-box `Exit code N`
 			// / `✗ Failed` badge (discoverable on expand; a failed call always has a
-			// box now, itemHasBox) plus the deliberate `· N failed` header count.
+			// box, itemHasBox) plus the deliberate `· N failed` header count.
 			// While live this ActivityCard reads the mutating model each frame; once
-			// frozen at settle it renders the collapsed card (ticket 11); a stale resumed
-			// snapshot renders settled/graceful (ticket 25).
+			// frozen at settle it renders the collapsed card; a stale resumed
+			// snapshot renders settled/graceful.
 			const card = new ActivityCard(model, theme, entry.id, view, rowMaps, hover, cardRenderPrimitives, stale);
 			// Wrap in MouseRegion so a click toggles this one card. Fullscreen routes
 			// clicks here natively; regular mode reaches it only via the synthesized
-			// dispatch in handleTerminalInput (ticket 09).
+			// dispatch in handleTerminalInput.
 			return new MouseRegion(card, (event) => onCardMouse(entry.id, event));
 		},
 	);
 
 	// ── Toggle shortcut: cycle the newest card's card-level state ──────────────
-	// Keyboard fallback for the per-node mouse toggles (ticket 16): cycle the
+	// Keyboard fallback for the per-node mouse toggles: cycle the
 	// NEWEST card full-collapse → default → all-expanded → back. Per-node clicks
 	// live in onCardMouse; this gives a mouse-free way to reach each card-level
 	// state on the card the user is most likely looking at.
@@ -1128,7 +1100,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			const cv = getCardView(view, id);
 			let label: string;
 			if (cv.fullCollapsed) {
-				// full → default: the groups tree with members hidden (boxes are modals now).
+				// full → default: the groups tree with members hidden (boxes are modals).
 				cv.fullCollapsed = false;
 				cv.membersVisible.clear();
 				label = "default";
@@ -1142,7 +1114,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				label = "expanded";
 			}
 			runtime.tui?.requestRender();
-			// Transient keyed footer status (ticket 19): echoes the new state without a
+			// Transient keyed footer status: echoes the new state without a
 			// persistent transcript line, then self-clears.
 			ctx.ui.setStatus(TOGGLE_STATUS_KEY, `Activity feed: ${label}`);
 			if (toggleStatusTimer) clearTimeout(toggleStatusTimer);
@@ -1153,22 +1125,22 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── Guarded leading-Spacer patch: LIVE-instance acquisition (ticket 31) ────
-	// Patching the imported AssistantMessageComponent.prototype (ticket 30) had ZERO
-	// live effect: the CLI runs a BUNDLE whose class object differs from the one the
-	// extension imports, and the bundle also minifies updateContent so the old
-	// fingerprint never matched it. Instead we acquire the prototype from a LIVE
+	// ── Guarded leading-Spacer patch: LIVE-instance acquisition ───────────────
+	// Patching the imported AssistantMessageComponent.prototype has ZERO live
+	// effect: the CLI runs a BUNDLE whose class object differs from the one the
+	// extension imports, and the bundle also minifies updateContent so a spaced
+	// fingerprint would never match it. Instead we acquire the prototype from a LIVE
 	// instance found by walking the running tree from the captured TUI handle, and
 	// patch THAT (identity duck-typed, Spacer duck-typed, fingerprint whitespace-
 	// normalized — all in src/patches.ts). Attempted lazily on assistant activity
 	// (message_start / message_update) until it resolves once per session: activate,
 	// or fail open against a found instance. Retries while no instance exists yet.
-	// Patch acquisition is owned by PatchController (ticket 38); see
+	// Patch acquisition is owned by PatchController; see
 	// patchController.tryPatchLivePrototype below.
 
-	// ── Visibility command (ticket 31 part 3) ─────────────────────────────────
+	// ── Visibility command ────────────────────────────────────────────────────
 	// `/activity-patch` prints the live patch status {active, reason} so activation
-	// is checkable in a real pane (the false-green ticket-30 failure was invisible).
+	// is checkable in a real pane (a falsely-green patch is otherwise invisible).
 	pi.registerCommand("activity-patch", {
 		description: "Show the status of all four activity-feed runtime hooks",
 		handler: async (_args, ctx) => {
@@ -1191,7 +1163,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ── Lifecycle wiring ──────────────────────────────────────────────────────
 	on("session_start", (_event: SessionStartEvent, ctx: ExtensionContext) => {
 		// Blank the collapsed-thinking placeholder so the ctrl+t-hidden state adds no
-		// visible label either (ticket 20; pairs with the markdown transformer above).
+		// visible label either (pairs with the markdown transformer above).
 		if (hasLiveUI(ctx)) ctx.ui.setHiddenThinkingLabel("");
 		// Always register the capture widget so the live card / toggle shortcut have a
 		// requestRender handle; it also enables mouse reporting unless --no-activity-mouse.
@@ -1201,9 +1173,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// only after a message starts, so there is nothing to patch here yet.
 
 		// Re-hide folded narration after ANY rebuild that re-activates the extension
-		// (owner bug: /reload showed every folded paragraph natively again). The
+		// (otherwise /reload would show every folded paragraph natively again). The
 		// rebuilt tree renders the ORIGINAL un-blanked stored messages, and a reload
-		// also threw away the old runtime's hide registry. Collect known narration
+		// also discards the previous runtime's hide registry. Collect known narration
 		// from every persisted card entry — an in-process /reload keeps the live
 		// mutated card data objects, so this is complete there. (A cross-process
 		// /resume still has empty snapshots — known open limitation.) The tree may
@@ -1218,7 +1190,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// row's activity lives in a card — absorb everything found.
 				for (const id of collectToolExecutionIds(runtime.tui)) absorbed.add(id);
 				tryAcquireToolRowPatch();
-				// Flick killer (owner issue): absorb + patch at MOUNT time, before the
+				// Flick killer: absorb + patch at MOUNT time, before the
 				// component's first render, so a native tool row never paints even one
 				// frame — covers pi's-handler-first event ordering AND the first tool
 				// of a fresh session (which acquires the render patch from itself).
@@ -1256,12 +1228,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
 		// A new agent response begins: clear per-response accumulation (which first
 		// force-settles any card still live from an abnormally-ended prior response —
-		// ticket 32 catch-all). The card is appended live on the first tool (ticket 11)
+		// the catch-all). The card is appended live on the first tool
 		// and settled in place at agent_settled, covering every turn in between.
 		resetResponse();
 	});
 
-	// ── Direct abnormal-end handling (ticket 32 point 2) ──────────────────────
+	// ── Direct abnormal-end handling ──────────────────────────────────────────
 	// message_end fires for EVERY assistant message carrying its final stopReason
 	// (agent-session.js _handleAgentEvent), including the errored/aborted one that
 	// ends a broken stream (agent-loop.js streamAssistantResponse emits message_end
@@ -1289,18 +1261,18 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 	});
 
-	// ── Compaction survival (ticket 25 layer 2) ─────────────────────────────
+	// ── Compaction survival ─────────────────────────────────────────────────
 	// A compaction drops every entry before its firstKeptEntryId from the rebuilt
 	// transcript (interactive-mode compaction_end → chatContainer.clear() then
 	// renderSessionEntries(buildContextEntries()); a custom entry appended earlier in
-	// the response is not in the kept context, so its card VANISHES — the owner's
-	// audited bug). When the last card entry did not survive, re-append a fresh
+	// the response is not in the kept context, so its card would VANISH).
+	// When the last card entry did not survive, re-append a fresh
 	// SETTLED card so the response stays visible; pi renders the new entry
 	// immediately (agent-session entry_appended → addCustomEntryToChat) and it lands
 	// in the kept context, so it also survives the next /resume. Deduped per source
 	// entry (reappendedFrom) so one response never yields two cards.
 	on("session_compact", (_event: SessionCompactEvent, ctx: ExtensionContext) => {
-		// Re-hide already-folded narration (ticket 41): a compaction rebuild recreates
+		// Re-hide already-folded narration: a compaction rebuild recreates
 		// every AssistantMessageComponent from the ORIGINAL, un-blanked stored messages
 		// (hideMessageTextBlock never touches what's persisted — the byte-identical-
 		// context constraint), so any paragraph already folded into a card would
@@ -1352,33 +1324,32 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	});
 
 	on("turn_start", (event: TurnStartEvent, ctx: ExtensionContext) => {
-		// A turn boundary does NOT break the group (ticket 10): sequential tool-only
+		// A turn boundary does NOT break the group: sequential tool-only
 		// turns stay one group. Only anchor the "Worked for Xs" clock on the first
 		// turn_start of the response.
 		if (responseStartMs === 0) responseStartMs = event.timestamp ?? Date.now();
 	});
 
 	on("message_update", (event: MessageUpdateEvent, ctx: ExtensionContext) => {
-		// Fallback acquisition (ticket 31): if message_start ran before the streaming
+		// Fallback acquisition: if message_start ran before the streaming
 		// component was mounted (or the walk missed it), retry here — updateContent is
 		// called on every streaming delta, so patching now still catches the message.
 		patchController.tryPatchLivePrototype(ctx);
 		const ame = event.assistantMessageEvent;
 		switch (ame.type) {
 			case "thinking_start":
-				// New thinking starting is proof anything pending was not the final answer
-				// (ticket 41).
+				// New thinking starting is proof anything pending was not the final answer.
 				narrationController.confirmNonFinal();
 				thinkingStartMs = Date.now();
 				thinkingBuf = "";
 				// Tick while the span streams so the live thought entry can appear at
-				// MIN_THOUGHT_MS and its timer/tail refresh (ticket 23). No-ops in print
+				// MIN_THOUGHT_MS and its timer/tail refresh. No-ops in print
 				// mode (startTimer guards on uiCtx). If tools are running the timer is
 				// already ticking; this keeps it alive across the thinking span.
 				startTimer();
 				break;
 			case "thinking_delta":
-				// Capture the streamed reasoning/summary text for this span (ticket 20).
+				// Capture the streamed reasoning/summary text for this span.
 				// Providers that stream reasoning text (Anthropic) or summary titles
 				// (OpenAI Responses) both deliver it here; a span with no text keeps an
 				// empty buffer and its row degrades to a bare "· Thought Ns".
@@ -1389,7 +1360,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				break;
 			case "thinking_end": {
 				const ms = thinkingStartMs ? Date.now() - thinkingStartMs : 0;
-				// Provider-stream normalization (span-classify.ts, owner issue): some
+				// Provider-stream normalization (span-classify.ts): some
 				// providers (Cursor) stream TOOL ACTIVITY through the thinking channel —
 				// "$ grep …", "read /path", "Cursor shell: <cmd>" dumps with output, no
 				// real tool events at all. A span classified as a tool step becomes a
@@ -1408,7 +1379,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 						labelOverride: cls.label,
 					});
 				} else {
-					// Copy the buffer into the span AT CLOSE (ticket 23 bounded retention): the
+					// Copy the buffer into the span AT CLOSE (bounded retention): the
 					// live box referenced thinkingBuf each tick; here the span freezes to it.
 					grouper.addThought(ms, thinkingBuf);
 				}
@@ -1422,23 +1393,23 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			}
 			case "text_start":
 				// A NEW text block starting is ALSO proof any pending one wasn't final
-				// (ticket 41) — two text blocks can stream back to back with nothing
+				// — two text blocks can stream back to back with nothing
 				// else between them.
 				narrationController.confirmNonFinal();
 				// A text block opened, but empty/whitespace-only blocks must NOT break
-				// the group (ticket 10): defer the break until non-whitespace content
+				// the group: defer the break until non-whitespace content
 				// actually arrives (text_delta / text_end).
 				grouper.textStart();
 				break;
 			case "text_delta":
-				// First non-whitespace delta breaks the current tool group (ticket 10).
+				// First non-whitespace delta breaks the current tool group.
 				grouper.textDelta(ame.delta);
 				break;
 			case "text_end":
 				// Break on a non-empty block even if no delta carried content (some
 				// providers deliver the whole text in text_end).
 				grouper.textEnd(ame.content);
-				// Capture the instance NOW (ticket 41) — unambiguous at this exact
+				// Capture the instance NOW — unambiguous at this exact
 				// moment, since no later message has started yet. Held until either
 				// confirmed non-final (hidden, folded into the card) or the response
 				// settles with nothing after it (the true final answer — left alone).
@@ -1460,8 +1431,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// then returns zero rows for it, so nothing paints and nothing collapses
 		// later (no differential-repaint/scrollback concerns at all).
 		absorbed.add(event.toolCallId);
-		// A new tool call starting is proof anything pending wasn't the final answer
-		// (ticket 41).
+		// A new tool call starting is proof anything pending wasn't the final answer.
 		narrationController.confirmNonFinal();
 		const call: ToolCall = {
 			toolCallId: event.toolCallId,
@@ -1472,8 +1442,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		ledger.set(event.toolCallId, call);
 		grouper.addCall(call);
 		runningTools++;
-		// First tool of the response: append the card NOW so it sits above the answer
-		// (ticket 11). Idempotent for the rest of the response.
+		// First tool of the response: append the card NOW so it sits above the answer.
+		// Idempotent for the rest of the response.
 		ensureCard();
 		startTimer();
 		refreshLive();
@@ -1493,19 +1463,19 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (call) {
 			call.endMs = Date.now();
 			call.isError = event.isError;
-			// Capture the FULL output for EVERY tool (owner issue: MCP/extension tool
-			// modals opened empty — capture was gated to command/search tools). Bounded
+			// Capture the FULL output for EVERY tool (not just command/search), so
+			// MCP/extension tool modals are never empty. Bounded
 			// at MAX_MODAL_CAPTURE; truncated command output additionally sets
 			// fullOutputPath (tool_result below), read lazily on open and preferred.
 			const text = extractResultText(event.result);
 			// The final result replaces any partial output streamed while it ran.
 			call.fullOutput = text.length > 0 ? text.slice(0, MAX_MODAL_CAPTURE) : undefined;
-			// The short INLINE preview stays gated to command/search calls (ticket 12
-			// req 5): read/edit/write target lines say enough, file bodies are huge.
+			// The short INLINE preview stays gated to command/search calls:
+			// read/edit/write target lines say enough, file bodies are huge.
 			if (isPreviewTool(call.name)) {
 				const preview = previewLines(text);
 				if (preview.length > 0) call.resultPreview = preview;
-				// On a failed command, capture the exit code for the box badge (ticket 17).
+				// On a failed command, capture the exit code for the box badge.
 				if (event.isError) {
 					const code = extractExitCode(text);
 					if (code !== undefined) call.exitCode = code;
@@ -1514,16 +1484,16 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		}
 		runningTools = Math.max(0, runningTools - 1);
 		// Refresh BEFORE stopping the timer so the just-finished call's ✓/✗ +
-		// duration lands in real time (ticket 12 req 3, reviewer P2): the ledger call
+		// duration lands in real time: the ledger call
 		// now has an endMs, so this snapshot drops its spinner. Ordering is safe —
 		// refreshLive() never (re)starts the timer, so the stopTimer() below still
 		// ends the ticking once the last tool of the batch settles. The timer also
-		// stays alive if a thinking span is streaming (ticket 23) — shouldTick().
+		// stays alive if a thinking span is streaming — shouldTick().
 		refreshLive();
 		if (!shouldTick(runningTools, thinkingActive())) stopTimer();
 	});
 
-	// Ticket 35: tool_result carries the TYPED details, incl. bash/powershell
+	// tool_result carries the TYPED details, incl. bash/powershell
 	// fullOutputPath — the temp file holding untruncated output when the command
 	// truncated it. Store the path so the modal reads the complete output lazily.
 	pi.on("tool_result", (event: ToolResultEvent) => {
@@ -1542,13 +1512,13 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	});
 
 	on("turn_end", (_event: TurnEndEvent, ctx: ExtensionContext) => {
-		// A turn ends: do NOT settle and do NOT break the group (ticket 10 —
+		// A turn ends: do NOT settle and do NOT break the group —
 		// sequential tool-only turns stay one group; the group only breaks on
-		// assistant text). One card per response is emitted at agent_settled
-		// (ticket 08). Absorb this turn's tool rows now, while they are still in the
+		// assistant text). One card per response is emitted at agent_settled.
+		// Absorb this turn's tool rows now, while they are still in the
 		// viewport — collapsing them here is a cheap differential repaint, whereas
 		// waiting for agent_settled would force a full redraw (scrollback wipe) once
-		// earlier turns scroll off (ticket 08 fix).
+		// earlier turns scroll off.
 		absorbCurrentRows();
 	});
 
@@ -1561,9 +1531,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event: SessionShutdownEvent, ctx: ExtensionContext) => {
 		stopTimer();
 		clearLive();
-		// Reverse the guarded runtime patch (tickets 30 + 31) so pi's live
+		// Reverse the guarded runtime patch so pi's live
 		// AssistantMessageComponent prototype is restored exactly as found; only restores
-		// if our wrapper is still installed (owned by PatchController, ticket 38).
+		// if our wrapper is still installed (owned by PatchController).
 		patchController.teardown();
 		if (toggleStatusTimer) {
 			clearTimeout(toggleStatusTimer);

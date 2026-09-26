@@ -1,9 +1,8 @@
 /**
- * Headless tests for the pure SGR mouse-packet parser (tickets 09 + 24).
+ * Headless tests for the pure SGR mouse-packet parser.
  *
  * Runs via Node's built-in TypeScript type-stripping (Node >= 23.6), no TUI:
- * `node --test test/mouse.test.ts`. These lock the reviewer-P1 residual-buffer
- * behaviour so a mouse packet split across a read boundary NEVER leaks into the
+ * `node --test test/mouse.test.ts`. These lock the residual-buffer behaviour so a mouse packet split across a read boundary NEVER leaks into the
  * editor:
  *   - a packet split at every byte position is reassembled across chunks,
  *   - a complete+partial mix consumes the complete run and holds the partial,
@@ -65,7 +64,7 @@ test("plain (non-mouse) input passes through unchanged, nothing held", () => {
 	assert.equal(parsed.residual, "");
 });
 
-// ── Reviewer P1: fragmentation at a read boundary ───────────────────────────────
+// ── Fragmentation at a read boundary ────────────────────────────────────────────
 
 test("split at EVERY boundary position of a packet reassembles across two chunks", () => {
 	const packet = "\x1b[<35;40;12M"; // code 35, col 40, row 12, press
@@ -99,7 +98,7 @@ test("a trailing keystroke in the same chunk is returned as passthrough after th
 	assert.equal(parsed.residual, "");
 });
 
-// ── Reviewer P1: a held residual that turns out NON-mouse must pass through ──────
+// ── A held residual that turns out NON-mouse must pass through ───────────────────
 
 test("a residual that completes into a non-mouse escape (arrow key) is passed through", () => {
 	// Chunk ends exactly on "\x1b[" (a valid prefix, optimistically held) …
@@ -124,7 +123,7 @@ test("a bare CSI key (\\x1b[3~ delete) split at \\x1b[3 is not mistaken for a fr
 	assert.equal(parsed.passthrough, "\x1b[3");
 });
 
-// ── Reviewer P1: residual cap ───────────────────────────────────────────────────
+// ── Residual cap ────────────────────────────────────────────────────────────────
 
 test("a would-be prefix longer than the cap is flushed as passthrough, not held", () => {
 	const overCap = `\x1b[<${"1;".repeat(20)}`; // matches the prefix shape but > cap

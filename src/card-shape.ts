@@ -1,23 +1,23 @@
 /**
- * Pure render-shaping for the activity card (tickets 12 + 16).
+ * Pure render-shaping for the activity card.
  *
  * The activity card renders in its FINAL shape from the first tool call and
  * grows in place: while the response is live it shows "⟳ Working · Xs" with the
  * group rows accumulating underneath, and at settle only the header word/spinner
- * changes — no other layout shift (ticket 12 req 1). This module turns a plain,
+ * changes — no other layout shift. This module turns a plain,
  * render-ready model into an ordered list of styled lines; it carries no TUI or
  * pi-agent dependency, so it is unit-testable with plain objects
  * (test/card-shape.test.ts). The Component in src/index.ts maps each segment's
  * `tone` through the live Theme and prefixes `indent` spaces.
  *
- * Ticket 21 — the card is an ordered TOP-LEVEL sequence of Thought entries and
+ * The card is an ordered TOP-LEVEL sequence of Thought entries and
  * Group entries in true event order (Codex-only reference):
  *
  *   header (level 1)            Worked for Xs ▾        ← full-collapse toggle
  *     · Thought 4s · planning approach ▸  (thought entry) ← expandable box
  *     • Ran commands · 2 commands ▾   (group entry)     ← members toggle
  *        $ Ran git status (0.3s) ▾    (level 3 member)   ← output-box toggle
- *           ┌ Shell ───────┐         (level 4 box)      ← bordered box (ticket 17)
+ *           ┌ Shell ───────┐         (level 4 box)      ← bordered box
  *           │ $ git status     │
  *           └──── ✓ Success ┘
  *     · Thought 2s · checking output ▸
@@ -30,14 +30,14 @@
  * thinking is dropped upstream (grouping.ts) and never reaches this module. No
  * thought text appears in a collapsed group row.
  *
- * Member rows carry a tool-family glyph mark (ticket 17 / toolGlyph); each
+ * Member rows carry a tool-family glyph mark (toolGlyph); each
  * expandable node carries a chevron (`▸` collapsed / `▾` expanded) at the
- * END of its row (atlas anatomy). Expansion is per-node, supplied by the caller
+ * END of its row. Expansion is per-node, supplied by the caller
  * via CardExpansion: the card is full-collapsed (header only) or in its default
  * view, each multi-member group entry independently shows/hides its members, each
  * member with output independently shows/hides its box, and each thought entry
  * independently shows/hides its "Thinking" box. Singleton groups render as the
- * member row directly (atlas U02); their chevron toggles the box.
+ * member row directly; their chevron toggles the box.
  *
  * shapeCard returns `lines` AND a parallel `rowMap` (line index → node id) so
  * src/index.ts can resolve which node a mouse click landed on without the shape
@@ -68,15 +68,15 @@ export interface ShapeLine {
 	kind: LineKind;
 	indent: number;
 	segments: Segment[];
-	/** True when this is the mouse-hovered clickable row (ticket 24): the Component
+	/** True when this is the mouse-hovered clickable row: the Component
 	 * bolds it for a theme-consistent highlight. Only primary rows (header/group/
 	 * thought/item) are ever marked — box/preview lines stay untouched. */
 	hovered?: boolean;
 }
 
-// ── Node identity (tickets 16 + 21) ─────────────────────────────────────────────
-// Stable string ids for the tree levels over the TOP-LEVEL entry sequence
-// (ticket 21). The header is a single node; every top-level entry is addressed by
+// ── Node identity ───────────────────────────────────────────────────────────────
+// Stable string ids for the tree levels over the TOP-LEVEL entry sequence.
+// The header is a single node; every top-level entry is addressed by
 // its index k in the model's `entries`: a group entry is `g<k>` (members
 // `g<k>.m<j>`), a thought entry is `t<k>`. The distinct `g`/`t` prefixes keep
 // group and thought ids collision-free. Box (level 3) lines carry their owning
@@ -96,13 +96,13 @@ export function memberNodeId(k: number, j: number): string {
 	return `g${k}.m${j}`;
 }
 
-/** Node id for the thought entry at top-level index `k` (ticket 21): toggles its
+/** Node id for the thought entry at top-level index `k`: toggles its
  * "Thinking" box. The `t` prefix keeps it collision-free from group ids. */
 export function thoughtNodeId(k: number): string {
 	return `t${k}`;
 }
 
-/** Node id for the narration entry at top-level index `k` (ticket 41): opens its
+/** Node id for the narration entry at top-level index `k`: opens its
  * modal. The `n` prefix keeps it collision-free from group/thought ids. */
 export function narrationNodeId(k: number): string {
 	return `n${k}`;
@@ -130,12 +130,12 @@ export function parseNodeId(id: string): ParsedNode {
 }
 
 /**
- * Per-node expansion state the caller supplies to shapeCard (tickets 16 + 21).
+ * Per-node expansion state the caller supplies to shapeCard.
  * Kept as predicates so card-shape.ts stays decoupled from how src/index.ts
  * stores the state (Sets keyed by entry id). `fullCollapsed` hides everything but
- * the header (atlas G2); otherwise each multi-member group entry's members, each
+ * the header; otherwise each multi-member group entry's members, each
  * member's box, and each thought entry's box are shown only when their predicate
- * returns true. All indices are TOP-LEVEL entry indices (ticket 21).
+ * returns true. All indices are TOP-LEVEL entry indices.
  */
 export interface CardExpansion {
 	fullCollapsed: boolean;
@@ -163,22 +163,22 @@ export interface ShapeItem {
 	running: boolean;
 	/** Output preview lines (already trimmed/truncated); empty when none. */
 	preview: string[];
-	/** Tool-family glyph for the member-row mark (ticket 17); see toolGlyph(). */
+	/** Tool-family glyph for the member-row mark; see toolGlyph(). */
 	glyph: string;
 	/** Raw shell command for command-family tools: drives the modal's `$ cmd` line
 	 * and the "Shell" caption. Undefined for non-command tools. */
 	command?: string;
-	/** Exit code extracted from a failed command's output (ticket 17 badge). */
+	/** Exit code extracted from a failed command's output (modal status badge). */
 	exitCode?: number;
-	/** Full untruncated output text for the modal (ticket 35), bounded at capture;
+	/** Full untruncated output text for the modal, bounded at capture;
 	 * carried on the item so the modal works after the ledger is cleared and
 	 * survives persistence. Undefined when nothing was captured. */
 	fullOutput?: string;
 	/** bash/powershell temp-file path holding the untruncated output when the
-	 * command truncated it; read lazily when the modal opens (ticket 35). */
+	 * command truncated it; read lazily when the modal opens. */
 	fullOutputPath?: string;
-	/** Pretty-printed call arguments for the modal's Input section (owner issue:
-	 * MCP/extension tool modals opened with nothing in them). Undefined for
+	/** Pretty-printed call arguments for the modal's Input section, so MCP/extension
+	 * tool modals are never empty. Undefined for
 	 * command tools (the `$ cmd` line already IS the input) and empty args. */
 	input?: string;
 	/** Display diff of a file edit (pi's `+12 line` format), captured from the
@@ -220,24 +220,24 @@ export function formatCallInput(args: Record<string, unknown> | undefined): stri
 }
 
 /**
- * One coalesced thought entry as the card renders it (ticket 21): total duration,
+ * One coalesced thought entry as the card renders it: total duration,
  * a one-line summary, and a bounded tail for the expandable "Thinking" box. Only
  * meaningful thinking runs (grouper-enforced total >= MIN_THOUGHT_MS) reach here.
  */
 export interface ShapeThought {
 	ms: number;
-	/** One-line summary of the kept thinking span (ticket 20); "" when none. */
+	/** One-line summary of the kept thinking span; "" when none. */
 	summary: string;
 	/** COMPACT preview only: last ~10 lines of the kept span's text, each
-	 * end-truncated to MAX_PREVIEW_LINE_LEN (ticket 20). Drives the collapsed card
+	 * end-truncated to MAX_PREVIEW_LINE_LEN. Drives the collapsed card
 	 * row's glance view — NOT the modal. [] when none. */
 	tail: string[];
 	/** The kept span's RAW untruncated text (up to THINKING_BUF_MAX, the capture
 	 * ceiling — no line/length capping). This is what the "Thinking" modal shows so
-	 * long reasoning reads to its natural end (ticket 40). "" when none. */
+	 * long reasoning reads to its natural end. "" when none. */
 	fullText: string;
 	/**
-	 * True while the underlying thinking span is still streaming (ticket 23). The
+	 * True while the underlying thinking span is still streaming. The
 	 * row then renders "⟳ Thinking… · Xs" with the running spinner mark instead of
 	 * the settled "· Thought Ns · <summary>"; the box (when expanded) shows the live
 	 * text tail, refreshed by the tick. Only the row text/mark differ from the
@@ -248,7 +248,7 @@ export interface ShapeThought {
 }
 
 /** A maximal run of consecutive tool calls, as the card renders it. Thinking is
- * NOT nested here (ticket 21) — it lives as its own top-level entry. */
+ * NOT nested here — it lives as its own top-level entry. */
 export interface ShapeGroup {
 	/** Settled verb-phrase label ("Read files, ran commands"). */
 	label: string;
@@ -258,7 +258,7 @@ export interface ShapeGroup {
 }
 
 /**
- * A narration entry as the card renders it (ticket 41): an intermediate
+ * A narration entry as the card renders it: an intermediate
  * assistant text block that turned out NOT to be the final answer (something
  * followed it), so it folds into the card in its chronological spot instead of
  * floating in the transcript as a separate paragraph. `summary` is a truncated
@@ -270,16 +270,16 @@ export interface ShapeNarration {
 }
 
 /**
- * One top-level entry in the card's ordered flow (ticket 21): a group of
+ * One top-level entry in the card's ordered flow: a group of
  * consecutive tool calls, a coalesced meaningful thinking run, or a narration
- * text block (ticket 41), interleaved in true event order.
+ * text block, interleaved in true event order.
  */
 export type CardEntry =
 	| { kind: "group"; group: ShapeGroup }
 	| { kind: "thought"; thought: ShapeThought }
 	| { kind: "narration"; narration: ShapeNarration };
 
-/** Every narration entry's full text from a card's entries, in order (ticket 41).
+/** Every narration entry's full text from a card's entries, in order.
  * Used to re-identify (by content, since object identity is gone) which native
  * text blocks a full transcript rebuild — compaction, /resume, /fork — must have
  * its hides re-applied to, so a previously-folded paragraph doesn't reappear
@@ -299,7 +299,7 @@ export function thoughtHasBox(thought: ShapeThought): boolean {
 /**
  * True when a group entry renders a level-2 group row with a members toggle: it
  * holds more than one tool call. A single-tool group renders as the member row
- * directly (atlas U02, ticket 21 rule 7).
+ * directly.
  */
 export function groupHasMembersToggle(group: ShapeGroup): boolean {
 	return group.items.length > 1;
@@ -311,17 +311,17 @@ export interface CardShapeModel {
 	/** Elapsed so far while live, or total worked time once settled. */
 	elapsedMs: number;
 	failures: number;
-	/** Ordered top-level flow: group + thought entries in event order (ticket 21). */
+	/** Ordered top-level flow: group + thought entries in event order. */
 	entries: CardEntry[];
 	/**
-	 * True when the settled duration is unknown (ticket 25 layer 3): a persisted
+	 * True when the settled duration is unknown: a persisted
 	 * snapshot that was saved mid-response (live:true, workedMs 0) renders
 	 * "Worked for —" instead of a bogus "Worked for 0s". Only consulted on the
 	 * settled header (never while live).
 	 */
 	unknownDuration?: boolean;
 	/**
-	 * True when the card was FORCE-SETTLED on an abnormal end (ticket 32): a stream
+	 * True when the card was FORCE-SETTLED on an abnormal end: a stream
 	 * error or a user abort (Esc) ended the response without a clean agent_settled,
 	 * so the settled header shows "Worked for Xs · interrupted" (dim/warn tone)
 	 * instead of pretending completion. Only consulted on the settled header.
@@ -330,7 +330,7 @@ export interface CardShapeModel {
 }
 
 /**
- * Tool-family glyph for a member-row mark (ticket 17 G4, atlas "Row anatomy").
+ * Tool-family glyph for a member-row mark.
  * One clean single-width glyph per family, rendered theme-dim by the Component:
  *   shell (bash/powershell) `$`, read `▤`, search/grep `⌕`, list/find `≡`,
  *   edit/write `✎`, generic tool `◆`. Chevrons use ▸/▾ so none are reused here.
@@ -339,8 +339,8 @@ export function toolGlyph(toolName: string): string {
 	return toolTraitGlyph(toolName);
 }
 
-/** Braille spinner frames for a currently-running row (ticket 12 req 2/3) AND the
- * live header (ticket 36). These are pi's OWN composer working-indicator frames
+/** Braille spinner frames for a currently-running row AND the
+ * live header. These are pi's OWN composer working-indicator frames
  * verbatim — `DEFAULT_FRAMES` in pi-tui `dist/components/loader.js` — so the card
  * header spins identically to the working bar below the editor
  * (`WorkingStatusIndicator` → `Loader`, no custom indicator ⇒ these defaults). All
@@ -350,19 +350,19 @@ export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", 
 /** pi's spinner frame interval (`DEFAULT_INTERVAL_MS` in pi-tui loader.js). The
  * header/row frame index is derived from `Date.now()` at this cadence so it
  * matches the working bar; pi's own 80 ms working-indicator renders drive our
- * card `render()` for free while it animates (ticket 36). */
+ * card `render()` for free while it animates. */
 export const SPINNER_INTERVAL_MS = 80;
 /** Current spinner frame for a wall-clock instant (pure, testable): pi advances
  * one frame every `SPINNER_INTERVAL_MS`, cycling the ten braille glyphs. */
 export function spinnerFrame(nowMs: number): string {
 	return SPINNER_FRAMES[Math.floor(nowMs / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length];
 }
-/** Max characters of a thought-row summary (ticket 20 rule 1). */
+/** Max characters of a thought-row summary. */
 export const MAX_THOUGHT_SUMMARY_LEN = 48;
-/** Max lines shown in an expanded "Thinking" box (ticket 20 rule 1, bounded tail). */
+/** Max lines shown in an expanded "Thinking" box (bounded tail). */
 export const MAX_THOUGHT_TAIL = 10;
-/** Output preview: last N lines of a command/search result (ticket 12 req 5,
- * bumped to ~8 tail lines in ticket 17). Still capped/trimmed at capture time. */
+/** Output preview: last N lines of a command/search result, capped/trimmed at
+ * capture time. */
 export const MAX_PREVIEW_LINES = 8;
 /** Truncate each preview line to this many characters. */
 export const MAX_PREVIEW_LINE_LEN = 120;
@@ -381,7 +381,7 @@ export function formatSeconds(ms: number): string {
 
 /**
  * Last ~N non-empty lines of a tool result's text, each truncated. Pure: used
- * to build ShapeItem.preview for command/search calls (ticket 12 req 5).
+ * to build ShapeItem.preview for command/search calls.
  */
 export function previewLines(text: string, maxLines = MAX_PREVIEW_LINES): string[] {
 	if (!text) return [];
@@ -394,9 +394,8 @@ export function previewLines(text: string, maxLines = MAX_PREVIEW_LINES): string
 	});
 }
 
-// ── Thinking coalescing (ticket 20) ────────────────────────────────────────────
-// A group can hold several bursty thinking spans (some sub-second — ticket 06
-// finding 3). We coalesce their durations into one "· Thought Ns" row, and derive
+// ── Thinking coalescing ─────────────────────────────────────────────────────────
+// A group can hold several bursty thinking spans (some sub-second). We coalesce their durations into one "· Thought Ns" row, and derive
 // its summary + expandable box from a single kept span (the LAST span that is
 // itself >= MIN_THOUGHT_MS with real text — matches how the native compact view
 // keeps the latest summary title). Sub-second spans still count toward the total
@@ -409,7 +408,7 @@ export interface ThoughtSpanInput {
 }
 
 /** Coalesced thinking for one group: total ms, a one-line summary, a compact box
- * tail (glance view), and the raw untruncated text for the modal (ticket 40). */
+ * tail (glance view), and the raw untruncated text for the modal. */
 export interface CoalescedThought {
 	ms: number;
 	summary: string;
@@ -420,7 +419,7 @@ export interface CoalescedThought {
 /**
  * First meaningful line of a thinking span, stripped of markdown emphasis /
  * heading / bullet markers and end-truncated to MAX_THOUGHT_SUMMARY_LEN
- * (ticket 20 rule 1). Providers stream reasoning as bold summary titles
+ * Providers stream reasoning as bold summary titles
  * (e.g. "**Comparing LRU cache data structures**"); this yields the clean
  * "Comparing LRU cache data structures". "" when the span carried no text.
  */
@@ -437,12 +436,12 @@ export function deriveThoughtSummary(text: string): string {
 }
 
 /** Character budget for a narration row's inline summary — roughly 2–3 wrapped
- * terminal rows at common widths before the … cut (owner request: don't clip to
- * one line; wrap first, truncate only after a few lines). */
+ * terminal rows at common widths before the … cut (wrap first, truncate only
+ * after a few lines rather than clipping to one). */
 export const MAX_NARRATION_SUMMARY_LEN = 240;
 
 /**
- * Narration summary (ticket 41): unlike a thought summary (one dim metadata
+ * Narration summary: unlike a thought summary (one dim metadata
  * line), a narration row IS the assistant's prose — keep much more of it.
  * Collapse all whitespace runs (newlines included) to single spaces so the
  * renderer's natural Text wrapping flows it as a paragraph, strip the same
@@ -460,7 +459,7 @@ export function deriveNarrationSummary(text: string): string {
 }
 
 /**
- * Coalesce a group's thinking spans (ticket 20 rules 1 + 3): sum every span's
+ * Coalesce a group's thinking spans: sum every span's
  * duration, then take the LAST span that is itself >= MIN_THOUGHT_MS and carries
  * text as the source for the summary + box tail. When no such span exists (all
  * sub-second, or none streamed text) the summary/tail are empty — the row then
@@ -479,10 +478,10 @@ export function coalesceThoughts(spans: readonly ThoughtSpanInput[]): CoalescedT
 		ms,
 		summary: chosen ? deriveThoughtSummary(chosen.text) : "",
 		tail: chosen ? previewLines(chosen.text, MAX_THOUGHT_TAIL) : [],
-		// EVERY span's text in stream order, not just the chosen one (owner bug:
-		// providers that stream reasoning as many small spans — Cursor — had all
-		// but the last span silently dropped from the modal, and the content
-		// appeared to be "overwritten" as each new span replaced it). Summary/tail
+		// EVERY span's text in stream order, not just the chosen one: providers
+		// that stream reasoning as many small spans (Cursor) would otherwise lose
+		// all but the last span from the modal, making the content appear
+		// "overwritten" as each new span replaced it. Summary/tail
 		// stay chosen-span (the glance view); the modal shows the whole run.
 		// Per-span text is bounded at capture (THINKING_BUF_MAX); the join is
 		// capped here as a final guard.
@@ -498,10 +497,10 @@ function seg(text: string, tone: Tone): Segment {
 }
 
 /**
- * Leading mark for a member row (ticket 17 — atlas "Row anatomy"): the
+ * Leading mark for a member row: the
  * tool-family glyph, theme-dim and consistent; a spinner while the call runs.
  * Success/failure moves to the output-box badge + the header failure count, so
- * the row carries one clean glyph (atlas shows no per-row ✓/✗).
+ * the row carries one clean glyph (no per-row ✓/✗).
  */
 function itemMark(item: ShapeItem, spinner: string): Segment {
 	if (item.running) return seg(spinner, "accent");
@@ -517,16 +516,16 @@ function chevron(open: boolean): Segment {
 	return seg(` ${open ? CHEVRON_OPEN : CHEVRON_CLOSED}`, "muted");
 }
 
-/** The "openable" affordance on a row whose content opens the floating modal
- * (ticket 35): a static closed chevron. It signals the row is clickable to open
- * its output/thinking overlay — there is no inline box to toggle anymore. */
+/** The "openable" affordance on a row whose content opens the floating modal:
+ * a static closed chevron. It signals the row is clickable to open its
+ * output/thinking overlay — there is no inline box to toggle. */
 function openableChevron(): Segment {
 	return seg(` ${CHEVRON_CLOSED}`, "muted");
 }
 
 /**
  * The node id at visual row `rowIndex` of a card's expanded row-map, or undefined
- * when the row is outside the card's rows (ticket 24). Pure: the mouse layer uses
+ * when the row is outside the card's rows. Pure: the mouse layer uses
  * it to resolve which node a motion/hover landed on (undefined = off the card =
  * clear hover / leave). Shared with tests so the resolution + out-of-range guard
  * are locked without a live terminal.
@@ -536,7 +535,7 @@ export function hoveredNodeAt(rowMap: readonly string[], rowIndex: number): stri
 }
 
 /**
- * Highlight the hovered clickable row (ticket 24). Pure decision over the built
+ * Highlight the hovered clickable row. Pure decision over the built
  * lines + rowMap: every PRIMARY row line (header/group/thought/item) whose node
  * id === `hoveredNode` gets `hovered` set and its trailing chevron bumped to
  * `accent`; box/preview lines (kind "preview") are left untouched so only the
@@ -557,12 +556,12 @@ function applyHover(lines: ShapeLine[], rowMap: readonly string[], hoveredNode: 
 }
 
 /**
- * Shape the whole card into the four-level tree (ticket 16), returning the styled
+ * Shape the whole card into the four-level tree, returning the styled
  * lines AND a parallel node-id row-map for mouse resolution. `expansion` selects
  * which nodes are open; `spinner` is the current animation frame for any running
- * row; `hoveredNode` (ticket 24) is the node id under the mouse, whose primary
+ * row; `hoveredNode` is the node id under the mouse, whose primary
  * row is highlighted. The live and settled views share this one function — only
- * the header word/spinner and a running row's glyph differ (ticket 12 req 1).
+ * the header word/spinner and a running row's glyph differ.
  */
 export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinner: string, hoveredNode?: string): ShapedCard {
 	const lines: ShapeLine[] = [];
@@ -572,28 +571,28 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 		rowMap.push(node);
 	};
 
-	// ── Header (level 1): full-collapse toggle; chevron at the end (atlas). ──
+	// ── Header (level 1): full-collapse toggle; chevron at the end. ──
 	const header: Segment[] = [];
 	if (model.live) {
-		// Animated braille spinner (ticket 36) — the SAME frame pi's composer working
+		// Animated braille spinner — the SAME frame pi's composer working
 		// bar shows, so the card header and the bar spin in lockstep; `spinner` is the
 		// current frame (spinnerFrame(Date.now()) in index.ts).
 		header.push(seg(spinner, "accent"), seg(` Working · ${formatDuration(model.elapsedMs)}`, "bold"));
 	} else {
-		// Graceful stale render (ticket 25): a resumed snapshot with no recorded
+		// Graceful stale render: a resumed snapshot with no recorded
 		// duration shows "—" rather than a misleading "0s".
 		const dur = model.unknownDuration ? "—" : formatDuration(model.elapsedMs);
 		header.push(seg(`Worked for ${dur}`, "bold"));
 	}
 	if (model.failures > 0) header.push(seg(` · ${model.failures} failed`, "error"));
-	// Abnormal-end marker (ticket 32): a force-settled card (stream error / user
+	// Abnormal-end marker: a force-settled card (stream error / user
 	// abort) says "· interrupted" in a calm dim tone instead of pretending clean
 	// completion. Only on the settled header — a live card never shows it.
 	if (!model.live && model.interrupted) header.push(seg(" · interrupted", "muted"));
 	header.push(chevron(!expansion.fullCollapsed));
 	push(HEADER_NODE, { kind: "header", indent: 0, segments: header });
 
-	// Full-collapse hides everything below the header (atlas G2).
+	// Full-collapse hides everything below the header.
 	if (expansion.fullCollapsed) {
 		applyHover(lines, rowMap, hoveredNode);
 		return { lines, rowMap };
@@ -601,8 +600,8 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 
 	// Render one tool member row. `k` is the owning group entry's top-level index,
 	// `j` the member index within that group. A member with box-worthy content
-	// (command / output / failure) is clickable to OPEN THE OUTPUT MODAL (ticket 35)
-	// — the inline box is gone, so the row carries an "openable" chevron (▸) as the
+	// (command / output / failure) is clickable to OPEN THE OUTPUT MODAL
+	// — there is no inline box, so the row carries an "openable" chevron (▸) as the
 	// affordance; clicking dispatches the member node, which index.ts opens as a
 	// floating overlay instead of toggling an inline box.
 	const pushTool = (k: number, j: number, item: ShapeItem, indent: number, kind: LineKind): void => {
@@ -612,7 +611,7 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 		push(memberNode, { kind, indent, segments });
 	};
 
-	// Walk the ordered top-level entry sequence (ticket 21): thought entries and
+	// Walk the ordered top-level entry sequence: thought entries and
 	// group entries render in true event order, each addressed by its index k.
 	model.entries.forEach((entry, k) => {
 		// Thought entry: "· Thought Ns · <summary> ▸", expandable to its "Thinking" box.
@@ -620,7 +619,7 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 		if (entry.kind === "thought") {
 			const thought = entry.thought;
 			const thoughtNode = thoughtNodeId(k);
-			// Live entry (ticket 23): a spinner mark + "Thinking… · Xs" (no summary yet);
+			// Live entry: a spinner mark + "Thinking… · Xs" (no summary yet);
 			// at close it transforms in place to "· Thought Ns · <summary>" — same node,
 			// same indent, so only the row text/mark change (no layout jump).
 			const segments: Segment[] = thought.live
@@ -628,16 +627,16 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 				: [seg(`· Thought ${formatDuration(thought.ms)}`, "dim")];
 			if (!thought.live && thought.summary) segments.push(seg(` · ${thought.summary}`, "muted"));
 			// A settled thought with captured text is clickable to open the Thinking
-			// modal (ticket 35); live entries have no stable box yet.
+			// modal; live entries have no stable box yet.
 			if (!thought.live && thoughtHasBox(thought)) segments.push(openableChevron());
 			push(thoughtNode, { kind: "thought", indent: 2, segments });
 			return;
 		}
 
-		// Narration entry (ticket 41): "› <summary> ▸", clickable to open the full
+		// Narration entry: "› <summary> ▸", clickable to open the full
 		// text in a modal — always openable, since a narration entry only ever exists
 		// when it captured non-whitespace text. The summary reads as NORMAL body text
-		// (theme "text" role, owner request) — it IS the assistant's prose, folded, not
+		// (theme "text" role) — it IS the assistant's prose, folded, not
 		// metadata like the dim thought/duration rows around it.
 		if (entry.kind === "narration") {
 			const narrationNode = narrationNodeId(k);
@@ -652,8 +651,8 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 		const groupNode = groupNodeId(k);
 		const running = group.items.some((item) => item.running);
 
-		// Singleton tool group (level 2≡3): render the member row directly (atlas U02,
-		// ticket 21 rule 7). Its chevron toggles the output box when it has one.
+		// Singleton tool group (level 2≡3): render the member row directly.
+		// Its chevron toggles the output box when it has one.
 		if (group.items.length === 1) {
 			pushTool(k, 0, group.items[0], 2, "group");
 			return;
@@ -678,7 +677,7 @@ export function shapeCard(model: CardShapeModel, expansion: CardExpansion, spinn
 
 /**
  * Expand a logical row-map (one entry per shape line) into VISUAL-row space
- * (ticket 16 fix). Mouse clicks arrive in wrapped visual rows, but shapeCard
+ * Mouse clicks arrive in wrapped visual rows, but shapeCard
  * indexes rowMap by logical shape line; a wide box/command line can wrap to ≥2
  * visual rows on a narrow terminal, which would otherwise shift every node below
  * it. `heights[i]` is the number of rendered rows shape line i occupies at the
@@ -695,10 +694,9 @@ export function expandRowMapToVisual(rowMap: readonly string[], heights: readonl
 	return visual;
 }
 
-// ── Output helpers (ticket 17 badge/capture, ticket 35 modal) ──────────────────
-// The inline bordered output box was removed in ticket 35 (clicking a row now
-// opens a floating modal instead). What survives here is the pure content logic
-// the modal and capture path still need: end-truncation, the box-worthy
+// ── Output helpers (badge, capture, modal content) ───────────────────────────
+// Output never renders inline (clicking a row opens a floating modal). This is
+// the pure content logic the modal and capture path need: end-truncation, the box-worthy
 // predicate, capture cleaning, and the status badge.
 
 /** End-truncate to `max` display cells, appending `…` when it overflows. */
@@ -710,18 +708,18 @@ export function truncateEnd(text: string, max: number): string {
 
 /**
  * A member has openable output-modal content when it has a command OR output
- * (ticket 17) — and also whenever it failed (ticket 18). A failed call with no
- * box-worthy output (e.g. a failed read/edit or a failed MCP tool) otherwise
- * has no affordance, so its only failure signal is the header count; making it
- * openable keeps the `Exit code N` / `✗ Failed` badge discoverable in the modal,
- * matching Codex's "failure = badge, no red ✗ row" style.
+ * — and also whenever it failed. A failed call with no box-worthy output (e.g.
+ * a failed read/edit or a failed MCP tool) otherwise has no affordance, so its
+ * only failure signal is the header count; making it openable keeps the
+ * `Exit code N` / `✗ Failed` badge discoverable in the modal, matching Codex's
+ * "failure = badge, no red ✗ row" style.
  */
 export function itemHasBox(item: ShapeItem): boolean {
 	return item.command !== undefined || item.preview.length > 0 || item.isError;
 }
 
 /**
- * Clean a captured output tail (ticket 19). Two fixes for the noise seen in
+ * Clean a captured output tail. Two fixes for the noise seen in
  * failed-command output: (1) when the exit code is known (`exitCode` set), strip
  * a trailing `Command exited with code N` line that repeats it — the shell tool
  * throws that text on a non-zero exit, so it lands in the captured output and
@@ -745,7 +743,7 @@ export function boxTail(preview: readonly string[], exitCode?: number): string[]
 }
 
 /**
- * Status badge for an output modal (atlas): success, a captured exit code, or a
+ * Status badge for an output modal: success, a captured exit code, or a
  * generic failure when no exit code is available. Pure so index.ts, the modal,
  * and tests share one rule.
  */

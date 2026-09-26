@@ -1,8 +1,8 @@
 /**
- * Tests for the pure modal-content model + scroll windowing (ticket 35). The
- * inline output box was replaced by a floating overlay; this file locks the
- * content composition (title / badge / caption / body / copy text) and the
- * scroll math the overlay component relies on.
+ * Tests for the pure modal-content model + scroll windowing of the floating
+ * output overlay. This file locks the content composition (title / badge /
+ * caption / body / copy text) and the scroll math the overlay component relies
+ * on.
  */
 
 import assert from "node:assert/strict";
@@ -69,7 +69,7 @@ test("a failed command modal carries the exit-code badge", () => {
 	assert.equal(content.body[0], "$ git push");
 });
 
-test("modal body drops the duplicated exit-code line and trailing blanks (ticket-19 cleanup, review P2)", () => {
+test("modal body drops the duplicated exit-code line and trailing blanks", () => {
 	const content = itemModalContent(
 		item({
 			isError: true,
@@ -122,7 +122,7 @@ test("a still-streaming thought titles like its card row", () => {
 	assert.equal(content.copyText, "so far");
 });
 
-// ── narrationModalContent (ticket 41) ────────────────────────────────────────────
+// ── narrationModalContent ────────────────────────────────────────────────────────
 
 test("a narration modal titles with the summary and a Narration caption, full body + copy", () => {
 	const content = narrationModalContent(
@@ -193,7 +193,7 @@ test("scrollHint is empty when everything fits and a 1-based range otherwise", (
 	assert.equal(scrollHint(100, 5, 20), "16–20 / 20"); // clamped to the last page
 });
 
-// ── wrapLine / wrapBody (ticket 39) ─────────────────────────────────────────────
+// ── wrapLine / wrapBody ─────────────────────────────────────────────────────────
 
 test("wrapLine leaves a line that fits unchanged", () => {
 	assert.deepEqual(wrapLine("short line", 20), ["short line"]);
@@ -264,7 +264,7 @@ test("wrapped body drives the scroll math on the larger row count", () => {
 	assert.equal(scrollHint(0, 2, rows.length), "1–2 / 3");
 });
 
-// ── Input section (owner issue 2: MCP/extension tool modals were empty) ────────
+// ── Input section (so MCP/extension tool modals are never empty) ───────────────
 
 test("a non-command modal with input leads with Input, then Output, caption Call", () => {
 	const content = itemModalContent(

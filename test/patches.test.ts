@@ -1,11 +1,9 @@
 /**
- * Headless tests for the guarded leading-Spacer patch (ticket 30).
+ * Headless tests for the guarded leading-Spacer patch.
  *
  * Runs via Node's built-in TypeScript type-stripping (Node >= 23.6), no TUI:
  * `node --test test/patches.test.ts`. These lock the guard contract so the patch
  * only ever fires on the exact pi 0.85.1 shape it targets and fails open safely:
- *   - onlyVisibleThinking distinguishes a suppressed-thinking-only message (drop
- *     the leading blank) from one with visible text (keep normal spacing),
  *   - matchesLeadingSpacerShape recognizes the pi 0.85.1 fingerprint and rejects
  *     drift (a renamed/removed leading-Spacer statement),
  *   - installLeadingSpacerPatch strips the leading Spacer for thinking-only,
@@ -57,13 +55,13 @@ test("matchesLeadingSpacerShape: recognizes the pi 0.85.1 fingerprint", () => {
 	assert.equal(matchesLeadingSpacerShape(PI_0_85_1_SNIPPET), true);
 });
 
-// The CLI runs a MINIFIED bundle, not the readable dist (ticket 31): variable
+// The CLI runs a MINIFIED bundle, not the readable dist: variable
 // names differ (c2 vs c), spaces are stripped, and hasVisibleContent is inlined.
 // The whitespace-normalized fingerprint must still match it, or the patch fails
 // open against the very method the CLI invokes.
 const PI_0_85_1_BUNDLE_SNIPPET = `updateContent(message,isStreaming=this.isStreaming){this.lastMessage=message,this.isStreaming=isStreaming,this.contentContainer.clear(),message.content.some(c2=>c2.type==="text"&&c2.text.trim()||c2.type==="thinking"&&c2.thinking.trim())&&this.contentContainer.addChild(new Spacer(1));let thinkingRunIndex=0;`;
 
-test("matchesLeadingSpacerShape: recognizes the minified BUNDLE fingerprint (ticket 31)", () => {
+test("matchesLeadingSpacerShape: recognizes the minified BUNDLE fingerprint", () => {
 	assert.equal(matchesLeadingSpacerShape(PI_0_85_1_BUNDLE_SNIPPET), true);
 });
 
@@ -102,7 +100,7 @@ class Spacer {
 	}
 }
 
-// Faithful children with a render() so the ticket-33 strip walk (which measures
+// Faithful children with a render() so the spacer-strip walk (which measures
 // rendered rows) classifies them like the real components: a suppressed thinking
 // run renders 0 rows, a text paragraph renders 1.
 class FakeThinking {
@@ -152,7 +150,7 @@ function makeFakeTarget(): {
 		// Mirrors pi 0.85.1 updateContent (assistant-message.js:69-135): a leading
 		// Spacer when the message has visible raw content, a zero-row thinking child
 		// per run, and a TRAILING Spacer after a thinking run when visible content
-		// follows. This is what the ticket-33 strip must clean up.
+		// follows. This is what the spacer strip must clean up.
 		updateContent(this: FakeInstanceShape, message: FakeMessage): void {
 			this.contentContainer.clear();
 			this.lastMessage = message;
@@ -265,7 +263,7 @@ test("installLeadingSpacerPatch: fails open when updateContent is absent (no-tar
 
 test("installLeadingSpacerPatch: strips the leading Spacer by DUCK-TYPING when no spacerClass is given (bundle-safe)", () => {
 	const { proto, instance } = makeFakeTarget();
-	// No spacerClass: the wrapper must duck-type the leading child (ticket 31 — an
+	// No spacerClass: the wrapper must duck-type the leading child (an
 	// imported class is unreliable across the bundle/dist split).
 	const patch = installLeadingSpacerPatch({ prototype: proto });
 	assert.equal(patch.active, true);
@@ -275,7 +273,7 @@ test("installLeadingSpacerPatch: strips the leading Spacer by DUCK-TYPING when n
 	patch.uninstall();
 });
 
-// ── isLeadingSpacer duck-typing (ticket 31) ───────────────────────────────
+// ── isLeadingSpacer duck-typing ───────────────────────────────────────────
 
 test("isLeadingSpacer: duck-types a pi-tui Spacer and rejects containers/content", () => {
 	// Duck-typed (no class): numeric lines + setLines + render, not a container.
@@ -291,7 +289,7 @@ test("isLeadingSpacer: duck-types a pi-tui Spacer and rejects containers/content
 	assert.equal(isLeadingSpacer(null), false);
 });
 
-// ── isAssistantMessageComponentLike duck-typing (ticket 31) ──────────────────
+// ── isAssistantMessageComponentLike duck-typing ─────────────────────────────
 
 test("isAssistantMessageComponentLike: identifies the component without importing the class", () => {
 	const amc = {
@@ -313,7 +311,7 @@ test("isAssistantMessageComponentLike: identifies the component without importin
 	assert.equal(isAssistantMessageComponentLike(null), false);
 });
 
-// ── findAssistantMessageComponents: live-tree walk (ticket 31) ────────────────
+// ── findAssistantMessageComponents: live-tree walk ────────────────────────────
 
 /** A minimal AMC-like instance whose prototype carries a fingerprint-matching
  * updateContent, so acquireLeadingSpacerPatch can derive + patch its prototype. */
@@ -349,7 +347,7 @@ test("findAssistantMessageComponents: returns [] when no component is mounted", 
 	assert.deepEqual(findAssistantMessageComponents(undefined), []);
 });
 
-// ── suppressedThinkingSpacersToRemove (ticket 33: strip ALL dead spacers) ─────
+// ── suppressedThinkingSpacersToRemove (strip ALL dead spacers) ──────────────
 
 // Build a children array the way pi's updateContent does, so the render-measured
 // strip rule is tested against realistic shapes. `t` = suppressed thinking (0
@@ -419,7 +417,7 @@ test("stripSuppressedThinkingSpacers: empty / no-container instances are a safe 
 	assert.equal(stripSuppressedThinkingSpacers({} as never), 0);
 });
 
-// ── acquireLeadingSpacerPatch: end-to-end live acquisition (ticket 31) ────────
+// ── acquireLeadingSpacerPatch: end-to-end live acquisition ────────────────────
 
 test("acquireLeadingSpacerPatch: finds the live instance, patches its prototype, and retroactively drops the spacer", () => {
 	const amc = makeLiveAmc(THINKING_ONLY.content);
@@ -460,7 +458,7 @@ test("acquireLeadingSpacerPatch: fails open on a drifted live prototype (found i
 	assert.equal(warnings.length, 1);
 });
 
-// ── hideMessageTextBlock (ticket 41): retroactively hide a confirmed-narration
+// ── hideMessageTextBlock: retroactively hide a confirmed-narration
 // text block by rebuilding through whatever updateContent is CURRENTLY bound,
 // so it composes with the installed spacer patch instead of bypassing it ──
 
@@ -533,7 +531,7 @@ test("hideMessageTextBlock: fails open (false, no-op) on an out-of-range or wron
 	assert.equal(instance.contentContainer.children.length, childrenBefore, "no-op left the render untouched");
 });
 
-test("hideMessageTextBlock: the hide SURVIVES a later native updateContent on the same instance (owner bug: thinking after narration in the SAME message resurrected the text)", () => {
+test("hideMessageTextBlock: the hide SURVIVES a later native updateContent on the same instance (thinking after narration in the SAME message must not resurrect the text)", () => {
 	const { instance } = makeFakeTarget();
 	instance.updateContent({ content: [{ type: "text", text: "Narration paragraph." }] });
 	assert.equal(hideMessageTextBlock(instance, 0), true);
@@ -550,7 +548,7 @@ test("hideMessageTextBlock: the hide SURVIVES a later native updateContent on th
 	});
 	// Index 0 stays hidden; the new blocks render normally.
 	const texts = instance.contentContainer.children.filter((ch) => ch instanceof FakeText);
-	assert.equal(texts.length, 1); // ONLY "Second block." \u2014 the narration stayed blanked
+	assert.equal(texts.length, 1); // ONLY "Second block." — the narration stayed blanked
 	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeThinking), true);
 });
 
@@ -574,7 +572,7 @@ test("hideMessageTextBlock: fails open when the instance has no lastMessage or u
 	assert.equal(hideMessageTextBlock(bare, 0), false);
 });
 
-// ── rehideNarrationAfterRebuild (ticket 41): re-apply hides across a rebuilt
+// ── rehideNarrationAfterRebuild: re-apply hides across a rebuilt
 // tree after compaction/resume/fork, by TEXT match since identity is gone ──
 
 test("rehideNarrationAfterRebuild: hides every matching text block across multiple instances", () => {
@@ -607,7 +605,7 @@ test("rehideNarrationAfterRebuild: only text whose TRIMMED content matches is hi
 	assert.equal(instance.contentContainer.children.some((ch) => ch instanceof FakeText), false);
 });
 
-// ── Universal tool-row hide patch (owner issue 1: MCP/extension rows) ──────────
+// ── Universal tool-row hide patch (MCP/extension rows) ─────────────────────────
 
 import { acquireToolRowHidePatch, installToolRowHidePatch, isToolExecutionComponentLike } from "../src/patches.ts";
 
@@ -668,7 +666,7 @@ test("isToolExecutionComponentLike rejects near-misses (missing markExecutionSta
 	);
 });
 
-// ── restoreMessageTextBlock (ticket 41 promotion) ──────────────────────────────
+// ── restoreMessageTextBlock (narration promoted to final answer) ───────────────
 
 import { restoreMessageTextBlock } from "../src/patches.ts";
 

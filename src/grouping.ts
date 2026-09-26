@@ -123,7 +123,7 @@ export class Grouper<C> {
 	}
 
 	/**
-	 * Record a thinking span (ms + captured text) into the pending run (ticket 21).
+	 * Record a thinking span (ms + captured text) into the pending run.
 	 * The run stays pending — invisible and non-breaking — until a tool call,
 	 * visible text, or finalize resolves it: emitted as one coalesced Thought
 	 * entry if its total duration is meaningful, discarded otherwise. Zero/negative
@@ -145,7 +145,7 @@ export class Grouper<C> {
 	}
 
 	/** A text block ended: break if it had non-empty content and hasn't broken yet
-	 * (unchanged), then record it as a narration entry (ticket 41) — folded into
+	 * (unchanged), then record it as a narration entry — folded into
 	 * the card in its chronological spot unless finalize() later finds it trailing
 	 * (the true final answer, popped back out). Whitespace-only blocks record
 	 * nothing, matching the existing no-break rule. */
@@ -156,8 +156,8 @@ export class Grouper<C> {
 	}
 
 	/** Close the open flow (resolve trailing thinking, close the open group) and
-	 * return the full ordered entry sequence. If the trailing entry is narration
-	 * (ticket 41), pop it out and return it as `finalAnswer` — it was never
+	 * return the full ordered entry sequence. If the trailing entry is narration,
+	 * pop it out and return it as `finalAnswer` — it was never
 	 * followed by anything, so it's the true final answer, not folded content. */
 	finalize(): FinalizeResult<C> {
 		this.resolvePending();
@@ -194,16 +194,15 @@ export class Grouper<C> {
 	/**
 	 * Read the ordered entries accumulated so far WITHOUT resolving the pending
 	 * thinking run or closing the open group. The open group is appended at the
-	 * tail as a live group entry (ticket 21 rule 6 — the running group grows at the
-	 * tail).
+	 * tail as a live group entry (the running group grows at the tail).
 	 *
-	 * Ticket 23 — pending thinking is now EXPOSED as a live thought entry at its
+	 * Pending thinking is EXPOSED as a live thought entry at its
 	 * chronological position (after the open group), but ONLY once the run's total
 	 * duration crosses the threshold. The run = the ended-but-unresolved spans
 	 * (`pendingSpans`) plus the optional in-progress `live` span. When it crosses,
 	 * the trailing thought entry appears and the open group above it reads as
-	 * closed (the thought sits after it, exactly like the final semantics of
-	 * ticket 21); below the threshold the run stays hidden and the open group is
+	 * closed (the thought sits after it, exactly like the final semantics);
+	 * below the threshold the run stays hidden and the open group is
 	 * the live tail. The entry keeps a STABLE top-level index across the live→
 	 * settled transform: it is always the last entry, and once resolvePending()
 	 * commits it at the same position no index before it shifts, so the card's

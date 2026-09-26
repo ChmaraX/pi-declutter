@@ -1,12 +1,10 @@
 /**
- * Card VIEW layer tests (review follow-up to the ticket-38 controller split
- * that already pulled out mouse handling): per-card expansion round-trip,
- * hover commit/clear throttling, and ActivityCard.render's row-map
- * registration — the piece onCardMouse (index.ts) depends on to resolve a
- * click to a node id.
+ * Card VIEW layer tests: per-card expansion round-trip, hover commit/clear
+ * throttling, and ActivityCard.render's row-map registration — the piece
+ * onCardMouse (index.ts) depends on to resolve a click to a node id.
  *
  * ActivityCard is unit-tested directly (not through a controller), because it
- * has no pi-tui value dependency left: Box/Text are injected via
+ * has no pi-tui value dependency: Box/Text are injected via
  * CardRenderPrimitives (mirrors ModalController's injected `makeModal`, see
  * test/modal-controller.test.ts) and Theme is faked the same way that suite
  * fakes its UI context.

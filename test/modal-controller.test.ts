@@ -1,6 +1,6 @@
 /**
- * ModalController lifecycle tests (ticket 38): open → swap → close, copy status,
- * and teardown. Previously trapped in the index.ts closure and untested.
+ * ModalController lifecycle tests: open → swap → close, copy status, and
+ * teardown.
  *
  * A fake UI context stands in for pi's ctx.ui.custom: it records each overlay
  * open, exposes the `done` callback (to simulate Esc/close) and a hide() spy on
@@ -210,10 +210,10 @@ test("ModalController: thought modal only opens on a thought entry", () => {
 	assert.equal(g.opens.length, 0);
 });
 
-test("ModalController: thought modal body is the FULL captured text (ticket 40), not the compact tail", () => {
+test("ModalController: thought modal body is the FULL captured text, not the compact tail", () => {
 	// tail is what the card row's glance view would show (short/capped); fullText is
-	// the real untruncated capture. The modal must render fullText, proving the
-	// fix threads entry.thought.fullText into thoughtModalContent — not tail.
+	// the real untruncated capture. The modal must render fullText, proving
+	// entry.thought.fullText is threaded into thoughtModalContent — not tail.
 	const full = "Paragraph one of real reasoning.\nParagraph two, much longer than the compact tail would ever keep.";
 	const thoughtModel = makeModel([
 		{ kind: "thought", thought: { ms: 4000, summary: "Planning", tail: ["Paragraph one\u2026"], fullText: full, live: false } },

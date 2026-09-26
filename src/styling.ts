@@ -63,7 +63,7 @@ function splitSegments(segments: readonly Segment[], offset: number): [Segment[]
 
 /**
  * Render one shape line as display rows no wider than `width`, with a hanging
- * indent: a row that starts with a marker ("\u203a ", "\u00b7 ", "$ ", a tool glyph or
+ * indent: a row that starts with a marker ("› ", "· ", "$ ", a tool glyph or
  * spinner frame) wraps its continuation rows under the first word after the
  * marker, not back at the card's left edge. Rows without an indent (the
  * header) wrap plainly.

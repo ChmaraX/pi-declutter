@@ -1,0 +1,52 @@
+name: release-please
+on:
+  push:
+    branches: [main]
+  # Re-run by hand to retry a failed npm publish; publishing an existing version is skipped.
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  # Opens a release PR from Conventional Commits. Merging it tags the version,
+  # updates CHANGELOG.md, creates a GitHub release, and triggers the npm publish.
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+
+  # npm trusted publishing (OIDC): no token secret. Configure once on npmjs.com:
+  # package settings -> Trusted publisher -> GitHub Actions,
+  # ChmaraX/pi-declutter, workflow release-please.yml.
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - id: version
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "v$v is not a release tag; nothing to publish"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif npm view "pi-declutter@$v" version >/dev/null 2>&1; then
+            echo "pi-declutter@$v is already on npm; skipping"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.published != 'true'
+        run: npm publish

@@ -62,18 +62,6 @@ export function getCardView(view: ViewState, id: string): CardView {
 	return cv;
 }
 
-/** True when every expandable node of the card is open (the all-expanded
- * state). "Expandable" means only multi-member group entries showing their
- * members — thought and narration rows have no separate expand state, they
- * just open a modal on click. */
-export function isAllExpanded(model: CardModel, cv: CardView): boolean {
-	if (cv.fullCollapsed) return false;
-	return model.entries.every((entry, k) => {
-		if (entry.kind !== "group") return true;
-		return !groupHasMembersToggle(entry.group) || cv.membersVisible.has(k);
-	});
-}
-
 /** Open every expandable node (every multi-member group's members). */
 export function setAllExpanded(model: CardModel, cv: CardView): void {
 	cv.fullCollapsed = false;

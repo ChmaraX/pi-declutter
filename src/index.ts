@@ -57,9 +57,8 @@
  *     click on a member row opens a floating modal with the call's input and
  *     output. Clicks are ON by default (opt out with
  *     --no-activity-mouse); shapeCard returns a parallel row-map (line → node id)
- *     so onCardMouse resolves the clicked node. The keyboard shortcut
- *     (ctrl+shift+a) is the fallback: it cycles the NEWEST card through
- *     full-collapse → default → all-expanded → back. Regular mode has no native
+ *     so onCardMouse resolves the clicked node. Pi's own tool-expansion key
+ *     (app.tools.expand) expands or collapses every card. Regular mode has no native
  *     mouse routing, so we enable SGR mouse reporting, parse the click packets
  *     from onTerminalInput, and synthesize a dispatch into the retained tree;
  *     fullscreen routes clicks natively via MouseRegion.
@@ -176,8 +175,6 @@ import {
 	type CardView,
 	getCardView,
 	type HoverState,
-	isAllExpanded,
-	setAllExpanded,
 	syncNativeExpansion,
 	type ViewState,
 } from "./card-view.ts";
@@ -196,13 +193,6 @@ const cardRenderPrimitives: CardRenderPrimitives = {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const CARD_TYPE = "activity-feed-summary";
-const TOGGLE_SHORTCUT = "ctrl+shift+a" as const;
-// The toggle shortcut does not notify() a persistent "Activity feed: <state>"
-// line into the transcript (noise): the chevron change is the real feedback.
-// It echoes the new state on a transient, keyed footer status instead and
-// clears it after a moment so nothing sticks in the transcript.
-const TOGGLE_STATUS_KEY = "activity-feed-toggle";
-const TOGGLE_STATUS_MS = 2000;
 // Live tick capped at 500ms: while the live card
 // is still in the bottom viewport this is a cheap differential repaint, but once
 // it scrolls above the viewport each tick forces a full redraw that wipes native
@@ -360,7 +350,7 @@ function richBodyDeps(): RichBodyDeps {
 }
 
 // ── Settled activity card ────────────────────────────────────────────────
-// CardView/ViewState/HoverState, getCardView/isAllExpanded/setAllExpanded, and
+// CardView/ViewState/HoverState, getCardView/setAllExpanded, and
 // the ActivityCard render component itself now live in card-view.ts (imported
 // above) — this file keeps only the wiring that owns their instances (`view`,
 // `hover`, `rowMaps` below) and dispatches into them from pi's events.
@@ -521,8 +511,6 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	// Capture-widget / mouse state.
 	let captureShown = false;
-	// Transient toggle-status clear timer.
-	let toggleStatusTimer: ReturnType<typeof setTimeout> | undefined;
 	let mouseUnsub: (() => void) | undefined;
 
 	const hasLiveUI = (ctx: ExtensionContext): boolean => ctx.mode === "tui" && ctx.hasUI;
@@ -1084,47 +1072,6 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		},
 	);
 
-	// ── Toggle shortcut: cycle the newest card's card-level state ──────────────
-	// Keyboard fallback for the per-node mouse toggles: cycle the
-	// NEWEST card full-collapse → default → all-expanded → back. Per-node clicks
-	// live in onCardMouse; this gives a mouse-free way to reach each card-level
-	// state on the card the user is most likely looking at.
-	pi.registerShortcut(TOGGLE_SHORTCUT, {
-		description: "Activity feed: cycle newest card (full-collapse / default / expanded)",
-		handler: (ctx: ExtensionContext) => {
-			if (!hasLiveUI(ctx)) return;
-			const id = view.order[view.order.length - 1];
-			if (!id) return;
-			const model = view.models.get(id);
-			if (!model) return;
-			const cv = getCardView(view, id);
-			let label: string;
-			if (cv.fullCollapsed) {
-				// full → default: the groups tree with members hidden (boxes are modals).
-				cv.fullCollapsed = false;
-				cv.membersVisible.clear();
-				label = "default";
-			} else if (isAllExpanded(model, cv)) {
-				// all-expanded → full-collapse.
-				cv.fullCollapsed = true;
-				label = "collapsed";
-			} else {
-				// default → all-expanded.
-				setAllExpanded(model, cv);
-				label = "expanded";
-			}
-			runtime.tui?.requestRender();
-			// Transient keyed footer status: echoes the new state without a
-			// persistent transcript line, then self-clears.
-			ctx.ui.setStatus(TOGGLE_STATUS_KEY, `Activity feed: ${label}`);
-			if (toggleStatusTimer) clearTimeout(toggleStatusTimer);
-			toggleStatusTimer = setTimeout(() => {
-				ctx.ui.setStatus(TOGGLE_STATUS_KEY, undefined);
-				toggleStatusTimer = undefined;
-			}, TOGGLE_STATUS_MS);
-		},
-	});
-
 	// ── Guarded leading-Spacer patch: LIVE-instance acquisition ───────────────
 	// Patching the imported AssistantMessageComponent.prototype has ZERO live
 	// effect: the CLI runs a BUNDLE whose class object differs from the one the
@@ -1535,17 +1482,6 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// AssistantMessageComponent prototype is restored exactly as found; only restores
 		// if our wrapper is still installed (owned by PatchController).
 		patchController.teardown();
-		if (toggleStatusTimer) {
-			clearTimeout(toggleStatusTimer);
-			toggleStatusTimer = undefined;
-			if (hasLiveUI(ctx)) {
-				try {
-					ctx.ui.setStatus(TOGGLE_STATUS_KEY, undefined);
-				} catch {
-					// UI context may already be torn down.
-				}
-			}
-		}
 		modalController.teardown();
 		teardownCapture();
 	});

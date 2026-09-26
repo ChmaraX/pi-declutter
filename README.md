@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/ChmaraX/pi-declutter)](LICENSE)
 
 <p align="center">
-  <a href="#features">features</a> · <a href="#install">install</a> · <a href="#usage">usage</a> · <a href="#limitations">limitations</a> · <a href="CHANGELOG.md">changelog</a>
+  <a href="#features">features</a> · <a href="#install">install</a> · <a href="#keybindings">keybindings</a> · <a href="CHANGELOG.md">changelog</a>
 </p>
 
 **[Pi](https://pi.dev), decluttered.** See what the agent did at a glance,
@@ -20,8 +20,8 @@ Inspired by the activity feed in the Codex app.
 - **One card per response.** Tool calls fold into short, grouped summaries.
 - **The answer stays in front.** Thinking and progress updates move into the
   card.
-- **Expand what you need.** Click a row, press `Ctrl+Shift+A`, or use Pi's
-  `Ctrl+O`.
+- **Expand what you need.** Click a row, or press Pi's `Ctrl+O` to expand
+  everything.
 - **Full detail on click.** Live output, diffs, syntax highlighting, Markdown
   and links. `c` copies.
   <!-- screenshot: output modal -->
@@ -39,37 +39,20 @@ Restart Pi. Pi shows a notice when a new release lands; update with
 `pi update --extensions`. To follow `main` instead of releases, install
 `git:github.com/ChmaraX/pi-declutter`.
 
-## Usage
+## Keybindings
 
-Just use Pi. The card appears on its own.
-
-| Action | How |
+| Key | Action |
 | --- | --- |
-| Collapse / expand a card | Click its header |
-| Show a group's calls | Click the group row |
-| Open full output, thinking or narration | Click the row |
-| Scroll · copy · close the modal | `↑` `↓` `PgUp` `PgDn` · `c` · `Esc` or click outside |
-| Cycle the newest card (keyboard) | `Ctrl+Shift+A` |
-| Check the runtime hooks | `/activity-patch` |
+| Click | Expand a card or group, or open a row |
+| `Ctrl+O` | Expand or collapse all cards (Pi's own key) |
 
-| Option | Effect |
+In an open row:
+
+| Key | Action |
 | --- | --- |
-| `pi --no-activity-mouse` | Turn off clicks. `Ctrl+Shift+A` still works. |
-| `PI_ACTIVITY_DEBUG=1` | Write the component tree to `/tmp/activity-feed-debug.log` (override with `PI_ACTIVITY_DEBUG_LOG`) |
-
-## Limitations
-
-- **Clicks take over mouse selection.** Hold `Shift` (or `Option` in iTerm2)
-  to select text, or use `--no-activity-mouse`. Pi's fullscreen renderer
-  doesn't have this problem.
-- **`Ctrl+T` no longer shows thinking.** Thinking lives only in the card's
-  Thought rows.
-- **It patches Pi internals.** Pi has no hook for these features, so the
-  extension patches four internals. Each patch is checked at startup and
-  turns itself off if Pi changes. `/activity-patch` shows their status.
-- It only changes the display. It registers no tools and doesn't touch the
-  prompt, so the model sees the same conversation.
-- TUI only. It does nothing in `-p` print mode.
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | Scroll |
+| `c` | Copy the plain text |
+| `Esc` `q` or click outside | Close |
 
 ## Development
 

@@ -23,7 +23,6 @@ import {
 	commitHover,
 	getCardView,
 	type HoverState,
-	isAllExpanded,
 	setAllExpanded,
 	syncNativeExpansion,
 	type ViewState,
@@ -110,36 +109,6 @@ test("getCardView creates the default tree on first access and reuses it after",
 	assert.ok(cv2.membersVisible.has(0));
 });
 
-test("setAllExpanded / isAllExpanded round-trip through full-collapse and default", () => {
-	const view: ViewState = { cards: new Map(), models: new Map(), order: [] };
-	const model = twoMemberGroupModel();
-	const cv = getCardView(view, "card-1");
-
-	assert.equal(isAllExpanded(model, cv), false, "default view (members hidden) is not all-expanded");
-
-	setAllExpanded(model, cv);
-	assert.equal(cv.fullCollapsed, false);
-	assert.ok(cv.membersVisible.has(0), "the only group entry's members are now visible");
-	assert.equal(isAllExpanded(model, cv), true);
-
-	cv.fullCollapsed = true;
-	assert.equal(isAllExpanded(model, cv), false, "full-collapse is never all-expanded");
-
-	cv.fullCollapsed = false;
-	cv.membersVisible.clear();
-	assert.equal(isAllExpanded(model, cv), false, "back to default (members hidden) round-trips cleanly");
-});
-
-test("isAllExpanded ignores thought/narration entries (only group members toggle)", () => {
-	const view: ViewState = { cards: new Map(), models: new Map(), order: [] };
-	const model = makeModel([
-		{ kind: "thought", thought: { ms: 2000, summary: "s", tail: ["x"], fullText: "x" } },
-		{ kind: "narration", narration: { text: "hello", summary: "hello" } },
-	]);
-	const cv = getCardView(view, "card-1");
-	assert.equal(isAllExpanded(model, cv), true, "no group entries means nothing left to expand");
-});
-
 test("syncNativeExpansion maps native collapsed to the default card tree", () => {
 	const model = twoMemberGroupModel();
 	const cv = { fullCollapsed: true, membersVisible: new Set([0]), nativeExpanded: true };
@@ -170,7 +139,7 @@ test("syncNativeExpansion maps native expanded to every currently expandable gro
 test("syncNativeExpansion preserves local deviations until the native flag changes", () => {
 	const model = twoMemberGroupModel();
 	const cv = { fullCollapsed: false, membersVisible: new Set<number>(), nativeExpanded: false };
-	cv.fullCollapsed = true; // local mouse / Ctrl+Shift+A deviation
+	cv.fullCollapsed = true; // local header-click deviation
 	syncNativeExpansion(model, cv, false);
 	assert.equal(cv.fullCollapsed, true, "an ordinary rebuild with the same native state preserves the local view");
 

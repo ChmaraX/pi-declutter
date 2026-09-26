@@ -5,26 +5,11 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "types": ["node"],
-    "typeRoots": [
-      "/Users/adamchmara/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@types"
-    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "esModuleInterop": true,
-    "baseUrl": ".",
-    "paths": {
-      "@earendil-works/pi-coding-agent": [
-        "/Users/adamchmara/.local/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
-      ],
-      "@earendil-works/pi-tui": [
-        "/Users/adamchmara/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
-      ],
-      "@earendil-works/pi-ai": [
-        "/Users/adamchmara/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.d.ts"
-      ]
-    }
+    "esModuleInterop": true
   },
   "include": ["src/**/*.ts"]
 }

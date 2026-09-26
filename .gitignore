@@ -1,4 +1,6 @@
 node_modules/
+*.tgz
+.DS_Store
 
 # Local development-only artifacts — not part of the published extension.
 .scratch/

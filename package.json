@@ -1,16 +1,50 @@
 {
-  "name": "pi-run-feed",
-  "version": "1.0.0",
-  "private": true,
+  "name": "pi-declutter",
+  "version": "0.0.0",
+  "description": "Pi, decluttered: fold tool calls, thinking and progress updates into one card per response, with every detail one click away.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "pi-coding-agent",
+    "tui",
+    "activity-feed",
+    "tool-calls",
+    "thinking"
+  ],
+  "license": "MIT",
+  "author": "Adam Chmara",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChmaraX/pi-declutter.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "type": "module",
-  "description": "Pi TUI extension: Codex/Cursor-style activity feed (one activity card per response that renders in its final shape from the first tool and grows in place, settling collapsibly).",
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json",
     "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
+    "@types/node": "^24.13.6",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

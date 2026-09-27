@@ -11,9 +11,7 @@
 **[Pi](https://pi.dev), decluttered.** See what the agent did at a glance,
 with every detail one click away.
 
-Inspired by the activity feed in the Codex app.
-
-<!-- video: a response running, the card growing, settling, clicking into a row -->
+https://github.com/user-attachments/assets/838f4769-1945-45ff-8d2c-046bd57059e6
 
 ## Features
 

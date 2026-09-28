@@ -28,7 +28,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/ChmaraX/pi-declutter/main/assets/thumb.png",
+    "video": "https://raw.githubusercontent.com/ChmaraX/pi-declutter/main/assets/demo.mp4"
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",

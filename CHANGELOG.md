@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ChmaraX/pi-declutter/compare/v0.2.0...v0.2.1) (2026-09-28)
+
+
+### Miscellaneous Chores
+
+* add pi.dev gallery thumbnail and demo video ([29792e3](https://github.com/ChmaraX/pi-declutter/commit/29792e3a1d8d5a16f5d3ab248d4ede8530d07362))
+
 ## [0.2.0](https://github.com/ChmaraX/pi-declutter/compare/v0.1.0...v0.2.0) (2026-09-26)
 
 

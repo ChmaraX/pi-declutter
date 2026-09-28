@@ -1,6 +1,6 @@
 {
   "name": "pi-declutter",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pi, decluttered. See what the agent did at a glance, with every detail one click away.",
   "keywords": [
     "pi-package",

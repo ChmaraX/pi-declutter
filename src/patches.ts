@@ -323,7 +323,7 @@ export function suppressedThinkingSpacersToRemove(children: readonly unknown[], 
 			}
 		}
 	}
-	return dead.filter((i) => !retain.has(i)).map((i) => children[i]);
+	return dead.flatMap((i) => retain.has(i) ? [] : [children[i]]);
 }
 
 /**
@@ -347,6 +347,12 @@ export function isAssistantMessageComponentLike(value: unknown): value is PatchT
 	return typeof v.setHiddenThinkingLabel === "function" || typeof v.setHideThinkingBlock === "function";
 }
 
+/** Optional traversal slots on an untrusted live component-tree node. */
+export interface ComponentTreeNode {
+	children?: unknown;
+	getMountedRoots?: unknown;
+}
+
 /**
  * Shared guarded walk over a live component tree: descend `children` arrays and
  * `getMountedRoots?.()`, cycle-guarded by a seen-set, never throwing into pi
@@ -356,7 +362,7 @@ export function isAssistantMessageComponentLike(value: unknown): value is PatchT
  * copies had already drifted subtly (early-stop vs full walk), which is exactly
  * the divergence this prevents.
  */
-export function walkTree(root: unknown, visit: (node: object) => boolean | undefined): void {
+export function walkTree(root: unknown, visit: (node: ComponentTreeNode) => boolean | undefined): void {
 	const seen = new Set<unknown>();
 	let stopped = false;
 	const step = (value: unknown): void => {
@@ -366,7 +372,7 @@ export function walkTree(root: unknown, visit: (node: object) => boolean | undef
 			for (const child of value) step(child);
 			return;
 		}
-		if (visit(value) === true) {
+		if (visit(value as ComponentTreeNode) === true) {
 			stopped = true;
 			return;
 		}
@@ -403,11 +409,11 @@ const hiddenBlockIndices = new WeakMap<object, Set<number>>();
 /** Shallow-copy `message` with every registered hidden text block blanked.
  * Never mutates the passed message or its content array — it may be pi's own
  * stored object (the byte-identical-context constraint). */
-function blankHiddenBlocks(instance: object, message: { content?: unknown }): { content?: unknown } {
+function blankHiddenBlocks(instance: PatchTargetInstance, message: { content?: unknown }): { content?: unknown } {
 	const set = hiddenBlockIndices.get(instance);
 	const content = message?.content;
 	if (!set || set.size === 0 || !Array.isArray(content)) return message;
-	const blanked = content.slice();
+	const blanked = [...content];
 	let changed = false;
 	for (const i of set) {
 		const block = blanked[i] as { type?: unknown; text?: unknown } | undefined;
@@ -506,7 +512,7 @@ export function restoreMessageTextBlock(instance: PatchTargetInstance, contentIn
 	if (!block || block.type !== "text" || typeof block.text !== "string") return false;
 	if (typeof instance.updateContent !== "function") return false;
 	hiddenBlockIndices.get(instance)?.delete(contentIndex);
-	const restored = content.slice();
+	const restored = [...content];
 	restored[contentIndex] = { ...block, text };
 	try {
 		instance.updateContent({ ...instance.lastMessage, content: restored });
@@ -630,6 +636,7 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 			// A cleanup fault must never break native message rendering.
 		}
 	};
+	// pi-lens-ignore: no-unknown-returns -- Transparent native wrapper: preserve the predecessor's exact return value without parsing or coercion.
 	const patched = function (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]): unknown {
 		// Let Pi build its tree unchanged, then remove only dead blank spacers.
 		const result = original.apply(this, [message, ...rest]);
@@ -810,8 +817,17 @@ export function dumpTranscriptTree(root: unknown, width: number, label: string):
 // without surrounding spacers and its own `hideComponent` path already returns
 // [] the same way, so an empty render collapses cleanly.
 
+/** Members checked at the live tool-component boundary (bundle-safe). */
+export interface ToolExecutionComponentInstance {
+	toolCallId: string;
+	toolName: string;
+	render: (width: number) => string[];
+	updateResult: (...args: unknown[]) => unknown;
+	markExecutionStarted: (...args: unknown[]) => unknown;
+}
+
 /** Duck-type for a live ToolExecutionComponent instance (bundle-safe). */
-export function isToolExecutionComponentLike(value: unknown): boolean {
+export function isToolExecutionComponentLike(value: unknown): value is ToolExecutionComponentInstance {
 	if (!value || typeof value !== "object") return false;
 	const v = value as {
 		toolCallId?: unknown;
@@ -839,6 +855,13 @@ const TOOL_ROW_PATCH_MARKER = "__activityFeedToolRowPatch";
  * every post-reload tool row render natively again). */
 const TOOL_ROW_PATCH_CALLBACK = "__activityFeedToolRowPatchCb";
 
+/** Slots inspected by the guarded tool-row prototype patch. */
+export interface ToolRowPatchPrototype {
+	render?: unknown;
+	[TOOL_ROW_PATCH_MARKER]?: unknown;
+	[TOOL_ROW_PATCH_CALLBACK]?: unknown;
+}
+
 /**
  * Patch `proto.render` so any instance whose toolCallId `isAbsorbed` renders
  * zero rows. `isAbsorbed` is a callback (not a snapshot) reading the shared
@@ -847,12 +870,8 @@ const TOOL_ROW_PATCH_CALLBACK = "__activityFeedToolRowPatchCb";
  * Returns false (fail open, native rows stay) when the prototype doesn't look
  * right. Render-only: never touches tool execution, results, or stored data.
  */
-export function installToolRowHidePatch(proto: object, isAbsorbed: (toolCallId: string) => boolean): boolean {
-	const p = proto as {
-		render?: unknown;
-		[TOOL_ROW_PATCH_MARKER]?: unknown;
-		[TOOL_ROW_PATCH_CALLBACK]?: unknown;
-	};
+export function installToolRowHidePatch(proto: ToolRowPatchPrototype, isAbsorbed: (toolCallId: string) => boolean): boolean {
+	const p = proto;
 	try {
 		// ALWAYS (re)bind the callback — this is what keeps the patch alive across
 		// /reload (the patched render below reads it per call, never a closure).
@@ -951,7 +970,7 @@ const TOOL_MOUNT_HOOK_CB = "__activityFeedToolMountHookCb";
  * existing wrap (same pattern as the render patch). Fail-open at every step;
  * the wrap never throws into pi's mounting path.
  */
-export function installToolMountHook(root: unknown, onMount: (instance: object) => void): boolean {
+export function installToolMountHook(root: unknown, onMount: (instance: ToolExecutionComponentInstance) => void): boolean {
 	let proto: object | null = root && typeof root === "object" ? Object.getPrototypeOf(root) : null;
 	while (proto && !Object.prototype.hasOwnProperty.call(proto, "addChild")) proto = Object.getPrototypeOf(proto);
 	if (!proto) return false;
@@ -974,11 +993,12 @@ export function installToolMountHook(root: unknown, onMount: (instance: object) 
 	if (typeof p.addChild !== "function") return false;
 	const original = p.addChild as (this: unknown, child: unknown, ...rest: unknown[]) => unknown;
 	try {
+		// pi-lens-ignore: no-unknown-returns -- Transparent native wrapper: preserve the predecessor's exact return value without parsing or coercion.
 		p.addChild = function (this: unknown, child: unknown, ...rest: unknown[]): unknown {
 			try {
 				if (isToolExecutionComponentLike(child)) {
 					const cb = p[TOOL_MOUNT_HOOK_CB];
-					if (typeof cb === "function") (cb as (instance: object) => void)(child as object);
+					if (typeof cb === "function") (cb as (instance: ToolExecutionComponentInstance) => void)(child);
 				}
 			} catch {
 				// Never break pi's mounting path.

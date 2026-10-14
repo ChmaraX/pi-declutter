@@ -58,6 +58,14 @@ In an open row:
   as a progress update or as the final answer, so it streams as a normal
   message first and moves into the card once the agent's next step starts.
 
+## Renderer compatibility
+
+Pi-declutter supports pi-zentui's registered thinking renderer without replacing
+its `updateContent` wrapper. Dead blank spacers are cleaned up before rendering,
+so Zentui retains ownership of its thinking UI. Unknown wrappers or changed Pi
+internals still fail open: native rendering continues, but extra blank lines may
+remain. Run `/activity-patch` after assistant activity to check activation.
+
 ## Development
 
 ```bash

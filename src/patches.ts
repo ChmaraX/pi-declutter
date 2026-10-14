@@ -75,6 +75,10 @@
  *     the patch FAILS OPEN: nothing is wrapped, the blanks return, the extension
  *     keeps working, and the returned state records `reason: "shape-drift"` (a
  *     probe-detectable flag; a single warn is emitted if a logger is supplied).
+ *   - Known wrapper interop: a current Zentui thinking registry record can prove
+ *     the SAME native fingerprint through its predecessor. Cleanup then runs
+ *     before `render`, leaving Zentui's updateContent identity/ownership intact.
+ *     Missing, stale, malformed, or drifted records still fail open.
  *   - Reversible: install returns an `uninstall()` that restores the original
  *     method (only if ours is still the installed one — downstream-aware, like
  *     pi-cc-extensions' patch registry), called on session_shutdown.
@@ -86,14 +90,11 @@
  * The predicate, walk, and shape matcher are pure and dependency-free (no pi
  * imports — the root, prototype, and Spacer identity are all resolved at runtime
  * from the live tree), so they are unit-testable with plain objects
- * (test/patches.test.ts) and the blank-probe drift canary can drive them against
- * the REAL component (prototypes/blank-probe/patch-probe.mjs).
- *
- * ⚠️ Run `node prototypes/blank-probe/patch-probe.mjs` after ANY pi/extension
- * update: it asserts the patched blank counts (40×[thinking,tool] → 0 blanks) AND
- * that the guard deactivates on simulated shape drift. If it reports shape-drift,
- * the fingerprint below needs re-checking against the new pi source. Live-bundle
- * activation is separately checkable with the `/activity-patch` command.
+ * (test/patches.test.ts). test/patches-zentui.test.ts also checks the REAL shipped
+ * component with a registered thinking wrapper (40×[thinking,tool] → 0 rows).
+ * Run `npm test` after Pi/extension updates to check spacing and fail-open
+ * regressions. Live-bundle activation is separately checkable with the
+ * `/activity-patch` command.
  */
 
 /** Minimal shape of a raw assistant message content block we inspect. */
@@ -165,6 +166,30 @@ export interface PatchTargetInstance {
 /** The prototype carrying the `updateContent(message, isStreaming?)` method. */
 interface PatchTargetPrototype {
 	updateContent?: (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]) => unknown;
+	render?: (this: PatchTargetInstance, width: number, ...rest: unknown[]) => string[];
+}
+
+// Zentui publishes its prototype-patch records under this shared symbol. Only
+// follow the thinking adapter when its wrapper is STILL the live method and its
+// predecessor carries our existing Pi fingerprint. Unknown/stale wrappers must
+// continue to fail open; merely having a registry is not enough.
+const ZENTUI_PATCH_REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
+function matchesRegisteredThinkingWrapper(proto: PatchTargetPrototype): boolean {
+	try {
+		const registry = (proto as PatchTargetPrototype & { [ZENTUI_PATCH_REGISTRY]?: unknown })[ZENTUI_PATCH_REGISTRY];
+		if (!(registry instanceof Map)) return false;
+		const record = registry.get("thinking-experimental-update-content") as {
+			method?: unknown;
+			wrapper?: unknown;
+			predecessor?: unknown;
+		} | undefined;
+		return (
+			record?.method === "updateContent" && record.wrapper === proto.updateContent &&
+			typeof record.predecessor === "function" && matchesLeadingSpacerShape(record.predecessor.toString())
+		);
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -569,6 +594,12 @@ type MarkedPrototype = PatchTargetPrototype & { [PATCH_MARKER]?: LeadingSpacerPa
  * message whose only visible raw content is suppressed thinking drops its leading
  * `Spacer(1)`. On any mismatch it fails open — returns `{ active: false, reason }`,
  * warns once, and leaves pi untouched. Idempotent and reversible.
+ *
+ * A registered Zentui thinking wrapper is checked through its predecessor, NOT
+ * by accepting an arbitrary wrapper source. In that case clean up just before
+ * `render` instead: Zentui checks updateContent identity to retain ownership, so
+ * wrapping it would silently displace its renderer. The render path rechecks the
+ * live updateContent guard on each call and never edits an unknown render tree.
  */
 export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): LeadingSpacerPatch {
 	const proto = deps.prototype as MarkedPrototype;
@@ -583,40 +614,59 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 		deps.warn?.("activity-feed: AssistantMessageComponent.updateContent not found — leading-spacer patch inactive (fail open).");
 		return { active: false, reason: "no-target", uninstall() {} };
 	}
-	if (!matchesLeadingSpacerShape(original.toString())) {
-		deps.warn?.("activity-feed: AssistantMessageComponent.updateContent shape drifted — leading-spacer patch inactive (fail open); run the blank-probe drift canary.");
+	const directMatch = matchesLeadingSpacerShape(original.toString());
+	const originalRender = proto.render;
+	const renderCleanup = !directMatch && matchesRegisteredThinkingWrapper(proto) && typeof originalRender === "function";
+	if (!directMatch && !renderCleanup) {
+		deps.warn?.("activity-feed: AssistantMessageComponent.updateContent shape drifted or has an unsupported wrapper — leading-spacer patch inactive (fail open); check /activity-patch and renderer extension compatibility.");
 		return { active: false, reason: "shape-drift", uninstall() {} };
 	}
 
 	const spacerClass = deps.spacerClass;
-	const patched = function (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]): unknown {
-		// Always let pi build the content tree first (unchanged behavior), then
-		// remove the dead blank spacers bordering any thinking run we suppressed —
-		// leading AND trailing, on any message shape, while keeping the
-		// single paragraph margin real text needs.
-		const result = original.apply(this, [message, ...rest]);
-		if (!patch.active) return result;
+	const strip = (instance: PatchTargetInstance) => {
 		try {
-			stripSuppressedThinkingSpacers(this, spacerClass);
+			stripSuppressedThinkingSpacers(instance, spacerClass);
 		} catch {
-			// A patch fault must never break message rendering — the original already ran.
+			// A cleanup fault must never break native message rendering.
 		}
+	};
+	const patched = function (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]): unknown {
+		// Let Pi build its tree unchanged, then remove only dead blank spacers.
+		const result = original.apply(this, [message, ...rest]);
+		if (patch.active) strip(this);
 		return result;
 	};
+	const patchedRender = typeof originalRender === "function" ? function (this: PatchTargetInstance, width: number, ...rest: unknown[]): string[] {
+		try {
+			if (
+				patch.active && typeof proto.updateContent === "function" &&
+				(matchesLeadingSpacerShape(proto.updateContent.toString()) || matchesRegisteredThinkingWrapper(proto))
+			) {
+				strip(this);
+			}
+		} catch {
+			// Even a faulty third-party guard/registry must not prevent native render.
+		}
+		return originalRender.apply(this, [width, ...rest]);
+	} : undefined;
 
 	const patch: LeadingSpacerPatch = {
 		active: true,
 		uninstall() {
 			if (!patch.active) return;
 			patch.active = false;
-			// Restore only if our wrapper is still the installed method (a later
-			// downstream patch, if any, keeps its own wrapper — like pi-cc-extensions).
-			if (proto.updateContent === patched) proto.updateContent = original;
+			// Preserve any downstream wrapper, whichever method we installed on.
+			if (renderCleanup) {
+				if (proto.render === patchedRender) proto.render = originalRender;
+			} else if (proto.updateContent === patched) {
+				proto.updateContent = original;
+			}
 			if (proto[PATCH_MARKER] === patch) delete proto[PATCH_MARKER];
 		},
 	};
 
-	proto.updateContent = patched;
+	if (renderCleanup) proto.render = patchedRender;
+	else proto.updateContent = patched;
 	proto[PATCH_MARKER] = patch;
 	return patch;
 }

@@ -857,7 +857,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ── Floating output modal ─────────────────────────────────────────────────────
 	// Clicking a member/thought row opens a focused overlay (ctx.ui.custom overlay)
 	// showing the FULL output/thinking text, scrollable and copyable. Only one modal at a time: opening another closes the
-	// current one first (handle.hide()), then shows the new content. The handle is
+	// current one first (through its done()), then shows the new content. It is
 	// also hidden on teardown / settle-abort so no overlay outlives its card.
 	// Modal lifecycle (open/swap/copy/close/teardown) is owned by ModalController;
 	// it reads the live model + UI context through injected accessors.

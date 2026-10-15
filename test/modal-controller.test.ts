@@ -3,8 +3,9 @@
  * teardown.
  *
  * A fake UI context stands in for pi's ctx.ui.custom: it records each overlay
- * open, exposes the `done` callback (to simulate Esc/close) and a hide() spy on
- * the handle (to detect a swap-close), and records setStatus calls.
+ * open, exposes the `done` callback (to simulate Esc/close), records whether
+ * custom() settled (done() removes the overlay and resolves it, as in pi), and
+ * records setStatus calls.
  */
 
 import assert from "node:assert/strict";
@@ -16,7 +17,8 @@ import { ModalController } from "../src/modal-controller.ts";
 interface OpenedOverlay {
 	/** Fires the overlay's done(), simulating Esc/q/click-out close. */
 	close: () => void;
-	hidden: boolean;
+	/** custom() resolved, so pi would emit ui_prompt_end for it. */
+	settled: Promise<boolean>;
 }
 
 function makeFakeCtx() {
@@ -30,23 +32,21 @@ function makeFakeCtx() {
 		ui: {
 			custom(
 				factory: (tui: unknown, theme: unknown, kb: unknown, done: (r: void) => void) => unknown,
-				options: { onHandle?: (h: unknown) => void },
 			): Promise<void> {
 				let resolveFn: () => void = () => {};
 				const p = new Promise<void>((res) => {
 					resolveFn = res;
 				});
-				const overlay: OpenedOverlay = { hidden: false, close: resolveFn };
+				const settled = Promise.race([
+					p.then(() => true),
+					new Promise<boolean>((res) => setTimeout(() => res(false), 50)),
+				]);
+				const overlay: OpenedOverlay = { close: resolveFn, settled };
 				const keybindings = {
 					matches: (data: string, action: string) => action === "app.tools.expand" && data === "configured-expand",
 				};
 				// Invoke the factory as pi would; the 4th arg is `done` (resolves custom()).
 				factory({}, { fg: (_r: string, t: string) => t, bold: (t: string) => t }, keybindings, () => resolveFn());
-				options.onHandle?.({
-					hide() {
-						overlay.hidden = true;
-					},
-				});
 				opens.push(overlay);
 				return p;
 			},
@@ -172,20 +172,24 @@ test("ModalController: opens a member modal", () => {
 	assert.equal(controller.isOpen(), true);
 });
 
-test("ModalController: opening a second modal swaps (hides the first)", () => {
+test("ModalController: opening a second modal swaps (closes the first)", async () => {
 	const { controller, opens } = makeController(groupModel(fakeItem()));
 	controller.openMemberModal("card", 0, 0);
 	controller.openMemberModal("card", 0, 0);
 	assert.equal(opens.length, 2);
-	assert.equal(opens[0].hidden, true, "first overlay hidden on swap");
+	assert.equal(await opens[0].settled, true, "first custom() settles on swap");
+	// The first overlay's late settle must not clear the second one.
 	assert.equal(controller.isOpen(), true);
+	controller.closeModal();
+	assert.equal(await opens[1].settled, true);
+	assert.equal(controller.isOpen(), false);
 });
 
-test("ModalController: closeModal hides the overlay and clears open state", () => {
+test("ModalController: closeModal settles the overlay and clears open state", async () => {
 	const { controller, opens } = makeController(groupModel(fakeItem()));
 	controller.openMemberModal("card", 0, 0);
 	controller.closeModal();
-	assert.equal(opens[0].hidden, true);
+	assert.equal(await opens[0].settled, true);
 	assert.equal(controller.isOpen(), false);
 });
 
@@ -227,11 +231,11 @@ test("ModalController: thought modal body is the FULL captured text, not the com
 	assert.notDeepEqual(contents[0].body, ["Paragraph one\u2026"]);
 });
 
-test("ModalController: teardown closes an open modal", () => {
+test("ModalController: teardown closes an open modal", async () => {
 	const { controller, opens } = makeController(groupModel(fakeItem()));
 	controller.openMemberModal("card", 0, 0);
 	controller.teardown();
-	assert.equal(opens[0].hidden, true);
+	assert.equal(await opens[0].settled, true);
 	assert.equal(controller.isOpen(), false);
 });
 

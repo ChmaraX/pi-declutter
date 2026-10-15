@@ -38,11 +38,6 @@ interface OpenModal {
 	finished: boolean;
 }
 
-/** Minimal overlay handle: hide() closes the overlay (a swap or teardown). */
-export interface ModalOverlayHandle {
-	hide(): void;
-}
-
 /** How long the in-modal "✓ Copied" footer feedback stays visible. */
 const MODAL_COPY_FEEDBACK_MS = 1500;
 
@@ -77,7 +72,10 @@ export interface ModalControllerDeps {
 }
 
 export class ModalController {
-	private modalHandle: ModalOverlayHandle | undefined;
+	// The open overlay's custom() completion callback. Closing through it (not
+	// OverlayHandle.hide()) settles the custom() prompt, so pi emits ui_prompt_end
+	// and prompts queued behind the modal (sandbox permission dialogs) can open.
+	private closeOpenModal: (() => void) | undefined;
 	private open: OpenModal | undefined;
 	private modalCopyTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly deps: ModalControllerDeps;
@@ -88,18 +86,19 @@ export class ModalController {
 
 	/** True while a modal overlay is open (test/inspection aid). */
 	isOpen(): boolean {
-		return this.modalHandle !== undefined;
+		return this.closeOpenModal !== undefined;
 	}
 
 	closeModal(): void {
-		if (!this.modalHandle) return;
+		const close = this.closeOpenModal;
+		if (!close) return;
+		this.closeOpenModal = undefined;
+		this.open = undefined;
 		try {
-			this.modalHandle.hide();
+			close();
 		} catch {
 			// Overlay may already be gone; ignore.
 		}
-		this.modalHandle = undefined;
-		this.open = undefined;
 	}
 
 	/** Look up the CardModel entry a node addresses, tolerant of a stale click after
@@ -118,8 +117,8 @@ export class ModalController {
 		const open: OpenModal = { target, component: undefined, raw, content, finished };
 		this.open = open;
 		// custom() resolves when the overlay closes; we don't need the result. The
-		// onHandle callback captures the handle so a later open can swap it, and
-		// teardown can force-close it.
+		// factory captures done() so a later open can swap it, and teardown can
+		// force-close it.
 		// Capture the live modal so the overlay's `visible` callback can feed it the
 		// current terminal height. `visible` fires each render cycle.
 		let modal: ModalComponent | undefined;
@@ -131,6 +130,7 @@ export class ModalController {
 		void ctx.ui
 			.custom<void>(
 				(_tui, theme, keybindings, done) => {
+					this.closeOpenModal = () => done();
 					modal = this.deps.makeModal(
 						content,
 						theme,
@@ -154,20 +154,15 @@ export class ModalController {
 							return true;
 						},
 					},
-					onHandle: (handle) => {
-						this.modalHandle = handle;
-					},
 				},
 			)
 			.then(() => {
-				// Resolves only when THIS overlay closes via done() (Esc / q / click-out) —
-				// NOT on OverlayHandle.hide() used for a swap (interactive-mode only resolves
-				// custom() on done). So on a genuine close we clear the handle; a swap path
-				// clears/repoints modalHandle itself in closeModal()/onHandle. A swapped-away
-				// OutputModal (≤64KB) is retained until process exit — bounded and
-				// user-paced, accepted as a known minor.
-				this.modalHandle = undefined;
-				if (this.open === open) this.open = undefined;
+				// Resolves when THIS overlay closes (Esc / q / click-out / swap / teardown).
+				// A swap already points the controller at the next modal, so only clear
+				// state that still belongs to this one.
+				if (this.open !== open) return;
+				this.closeOpenModal = undefined;
+				this.open = undefined;
 			});
 	}
 

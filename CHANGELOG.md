@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/ChmaraX/pi-declutter/compare/v0.2.1...v0.2.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* preserve spacer cleanup with Zentui thinking renderer ([#4](https://github.com/ChmaraX/pi-declutter/issues/4)) ([03fb016](https://github.com/ChmaraX/pi-declutter/commit/03fb016deaca7dcced08a07f6791afc2bcce667c))
+* settle the modal's custom() prompt on every close ([#5](https://github.com/ChmaraX/pi-declutter/issues/5)) ([b59f931](https://github.com/ChmaraX/pi-declutter/commit/b59f931676835b4efb4e66b6f093170c13eacff2))
+
 ## [0.2.1](https://github.com/ChmaraX/pi-declutter/compare/v0.2.0...v0.2.1) (2026-09-28)
 
 

@@ -58,6 +58,14 @@ In an open row:
   as a progress update or as the final answer, so it streams as a normal
   message first and moves into the card once the agent's next step starts.
 
+## Compatibility
+
+Works alongside [pi-zentui](https://github.com/lmilojevicc/pi-zentui), including
+its Thinking (Experimental) renderer. If another extension or a Pi update
+changes how Pi builds messages, pi-declutter turns its blank-line cleanup off
+instead of breaking rendering, so some extra blank lines can come back.
+`/activity-patch` shows whether the cleanup is active.
+
 ## Development
 
 ```bash

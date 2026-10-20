@@ -33,6 +33,9 @@ export class PatchController {
 
 	/** Current {active, reason}, read by the /activity-patch command + probes. */
 	getStatus(): PatchStatus {
+		// Installed but paused at render time (another extension took over
+		// updateContent after install): report it, not the install-time snapshot.
+		if (this.spacerPatch?.degraded) return { active: false, reason: "shape-drift" };
 		return this.status;
 	}
 

@@ -36,6 +36,35 @@ interface OpenModal {
 	content: ModalContent;
 	/** The row settled and its final content has been shown; nothing changes after. */
 	finished: boolean;
+	/** custom()'s done(), set once the modal is built. It removes the overlay AND
+	 * settles the custom() prompt, so pi emits ui_prompt_end and dialogs queued
+	 * behind the modal can open. */
+	close: (() => void) | undefined;
+	/** The overlay's own handle (custom()'s onHandle), for older pi below. */
+	handle: ModalOverlayHandle | undefined;
+	/** The TUI custom() handed the factory; older pi's done() pops its overlay stack. */
+	tui: unknown;
+}
+
+/** The part of pi-tui's OverlayHandle the controller uses. */
+interface ModalOverlayHandle {
+	hide(): void;
+}
+
+/** Whether pi's custom() done() removes its own overlay. Before pi 1.3.0 it
+ * removes the TOPMOST overlay, which is another extension's dialog when one
+ * covers the modal (pi #10648). */
+export function doneClosesOwnOverlay(piVersion: string | undefined): boolean {
+	const [major, minor] = (piVersion ?? "").split(".").map(Number);
+	return major > 1 || (major === 1 && minor >= 3);
+}
+
+/** True when `open` is the last entry of pi-tui's (private) overlay stack: the
+ * overlay older pi's done() removes. */
+function isTopmostOverlay(open: OpenModal): boolean {
+	const stack = (open.tui as { overlayStack?: unknown } | undefined)?.overlayStack;
+	if (!Array.isArray(stack) || open.component === undefined) return false;
+	return (stack.at(-1) as { component?: unknown } | undefined)?.component === open.component;
 }
 
 /** How long the in-modal "✓ Copied" footer feedback stays visible. */
@@ -55,6 +84,8 @@ export interface ModalControllerDeps {
 	readFullOutput(item: ShapeItem): string | undefined;
 	/** Copy raw text to the clipboard (pi's supported helper). */
 	copyToClipboard(text: string): Promise<void>;
+	/** True when pi's done() removes its own overlay (doneClosesOwnOverlay). */
+	doneClosesOwnOverlay: boolean;
 	/** Repaint request so the in-modal copy feedback shows/clears promptly. */
 	requestRender(): void;
 	/** Build the overlay component without importing the pi-tui-backed view. */
@@ -72,10 +103,6 @@ export interface ModalControllerDeps {
 }
 
 export class ModalController {
-	// The open overlay's custom() completion callback. Closing through it (not
-	// OverlayHandle.hide()) settles the custom() prompt, so pi emits ui_prompt_end
-	// and prompts queued behind the modal (sandbox permission dialogs) can open.
-	private closeOpenModal: (() => void) | undefined;
 	private open: OpenModal | undefined;
 	private modalCopyTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly deps: ModalControllerDeps;
@@ -86,18 +113,22 @@ export class ModalController {
 
 	/** True while a modal overlay is open (test/inspection aid). */
 	isOpen(): boolean {
-		return this.closeOpenModal !== undefined;
+		return this.open?.close !== undefined;
 	}
 
+	/** Close the open modal (a swap, click-away, or teardown). */
 	closeModal(): void {
-		const close = this.closeOpenModal;
-		if (!close) return;
-		this.closeOpenModal = undefined;
+		const open = this.open;
+		if (!open) return;
 		this.open = undefined;
 		try {
-			close();
+			// done() is the close that settles the prompt. On older pi it removes the
+			// topmost overlay, so when another overlay covers this one, remove only
+			// our own through its handle; that custom() prompt then stays open.
+			if (open.close && (this.deps.doneClosesOwnOverlay || isTopmostOverlay(open))) open.close();
+			else open.handle?.hide();
 		} catch {
-			// Overlay may already be gone; ignore.
+			// A throwing host close must not break a swap or teardown.
 		}
 	}
 
@@ -114,14 +145,19 @@ export class ModalController {
 		// Swap semantics: close any open modal before opening the next.
 		this.closeModal();
 		const content = this.enrich(raw, item);
-		const open: OpenModal = { target, component: undefined, raw, content, finished };
-		this.open = open;
-		// custom() resolves when the overlay closes; we don't need the result. The
-		// factory captures done() so a later open can swap it, and teardown can
-		// force-close it.
-		// Capture the live modal so the overlay's `visible` callback can feed it the
-		// current terminal height. `visible` fires each render cycle.
 		let modal: ModalComponent | undefined;
+		const open: OpenModal = {
+			target, component: undefined, raw, content, finished, close: undefined, handle: undefined, tui: undefined,
+		};
+		this.open = open;
+		// A swap already points the controller at the next modal, so a late settle
+		// (or a failed open) clears only state that still belongs to this one.
+		const clear = () => {
+			if (this.open === open) this.open = undefined;
+		};
+		// custom() resolves when the overlay closes (Esc / q / click-out / swap /
+		// teardown); we don't need the result. `modal` is captured so the overlay's
+		// `visible` callback can feed it the terminal size on each render.
 		// Width: 80% of the terminal but never wider than MODAL_MAX_WIDTH_COLS —
 		// computed at open (the overlay option is static; a mid-open resize still
 		// reflows the body via render width).
@@ -129,8 +165,8 @@ export class ModalController {
 		const modalWidth = Math.min(Math.max(40, Math.floor(cols * 0.8)), MODAL_MAX_WIDTH_COLS);
 		void ctx.ui
 			.custom<void>(
-				(_tui, theme, keybindings, done) => {
-					this.closeOpenModal = () => done();
+				(tui, theme, keybindings, done) => {
+					open.tui = tui;
 					modal = this.deps.makeModal(
 						content,
 						theme,
@@ -140,6 +176,7 @@ export class ModalController {
 						() => ctx.ui.setToolsExpanded(!ctx.ui.getToolsExpanded()),
 					);
 					open.component = modal;
+					open.close = done;
 					return modal as never;
 				},
 				{
@@ -154,16 +191,12 @@ export class ModalController {
 							return true;
 						},
 					},
+					onHandle: (handle) => {
+						open.handle = handle;
+					},
 				},
 			)
-			.then(() => {
-				// Resolves when THIS overlay closes (Esc / q / click-out / swap / teardown).
-				// A swap already points the controller at the next modal, so only clear
-				// state that still belongs to this one.
-				if (this.open !== open) return;
-				this.closeOpenModal = undefined;
-				this.open = undefined;
-			});
+			.then(clear, clear);
 	}
 
 	/**

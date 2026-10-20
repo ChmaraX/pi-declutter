@@ -2,27 +2,40 @@
  * ModalController lifecycle tests: open → swap → close, copy status, and
  * teardown.
  *
- * A fake UI context stands in for pi's ctx.ui.custom: it records each overlay
- * open, exposes the `done` callback (to simulate Esc/close), records whether
- * custom() settled (done() removes the overlay and resolves it, as in pi), and
- * records setStatus calls.
+ * A fake UI context stands in for pi's ctx.ui.custom: it keeps pi-tui's overlay
+ * stack, exposes each overlay's `done` callback (Esc/close), and records whether
+ * custom() settled. As in pi, only done() settles custom(); the handle's hide()
+ * removes the overlay without settling it. done() removes its own overlay (pi ≥
+ * 1.3) or, with `oldDone`, the TOPMOST overlay (older pi).
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CardModel } from "../src/card-model.ts";
 import type { ShapeItem } from "../src/card-shape.ts";
-import { ModalController } from "../src/modal-controller.ts";
+import { doneClosesOwnOverlay, ModalController } from "../src/modal-controller.ts";
 
 interface OpenedOverlay {
 	/** Fires the overlay's done(), simulating Esc/q/click-out close. */
 	close: () => void;
 	/** custom() resolved, so pi would emit ui_prompt_end for it. */
-	settled: Promise<boolean>;
+	settled: boolean;
 }
 
-function makeFakeCtx() {
+interface StackEntry {
+	component: unknown;
+}
+
+/** Let custom()'s settle callbacks run before asserting on them. */
+const flush = () => new Promise<void>((res) => setImmediate(res));
+
+function makeFakeCtx(oldDone = false) {
 	const opens: OpenedOverlay[] = [];
+	const tui = { overlayStack: [] as StackEntry[] };
+	const remove = (entry: StackEntry) => {
+		const i = tui.overlayStack.indexOf(entry);
+		if (i >= 0) tui.overlayStack.splice(i, 1);
+	};
 	const statuses: Array<[string, string | undefined]> = [];
 	const toolsExpandedChanges: boolean[] = [];
 	let toolsExpanded = false;
@@ -32,21 +45,31 @@ function makeFakeCtx() {
 		ui: {
 			custom(
 				factory: (tui: unknown, theme: unknown, kb: unknown, done: (r: void) => void) => unknown,
+				options: { onHandle?: (handle: { hide(): void }) => void },
 			): Promise<void> {
 				let resolveFn: () => void = () => {};
 				const p = new Promise<void>((res) => {
 					resolveFn = res;
 				});
-				const settled = Promise.race([
-					p.then(() => true),
-					new Promise<boolean>((res) => setTimeout(() => res(false), 50)),
-				]);
-				const overlay: OpenedOverlay = { close: resolveFn, settled };
+				const entry: StackEntry = { component: undefined };
+				let closed = false;
+				const done = () => {
+					if (closed) return;
+					closed = true;
+					if (oldDone) tui.overlayStack.pop();
+					else remove(entry);
+					resolveFn();
+				};
+				const overlay: OpenedOverlay = { close: done, settled: false };
+				void p.then(() => {
+					overlay.settled = true;
+				});
 				const keybindings = {
 					matches: (data: string, action: string) => action === "app.tools.expand" && data === "configured-expand",
 				};
-				// Invoke the factory as pi would; the 4th arg is `done` (resolves custom()).
-				factory({}, { fg: (_r: string, t: string) => t, bold: (t: string) => t }, keybindings, () => resolveFn());
+				entry.component = factory(tui, { fg: (_r: string, t: string) => t, bold: (t: string) => t }, keybindings, done);
+				tui.overlayStack.push(entry);
+				options.onHandle?.({ hide: () => remove(entry) });
 				opens.push(overlay);
 				return p;
 			},
@@ -62,7 +85,13 @@ function makeFakeCtx() {
 			},
 		},
 	};
-	return { ctx, opens, statuses, toolsExpandedChanges };
+	/** Another extension's overlay opened above everything shown so far. */
+	const coverWithOtherOverlay = (): StackEntry => {
+		const other = { component: "another extension's dialog" };
+		tui.overlayStack.push(other);
+		return other;
+	};
+	return { ctx, opens, statuses, toolsExpandedChanges, tui, coverWithOtherOverlay };
 }
 
 function makeModel(entries: CardModel["entries"]): CardModel {
@@ -90,8 +119,13 @@ type Enrich = (
 	item?: ShapeItem,
 ) => import("../src/modal.ts").ModalContent;
 
-function makeController(model: CardModel | undefined, enrich?: Enrich, readFullOutput: () => string | undefined = () => undefined) {
-	const { ctx, opens, statuses, toolsExpandedChanges } = makeFakeCtx();
+function makeController(
+	model: CardModel | undefined,
+	enrich?: Enrich,
+	readFullOutput: () => string | undefined = () => undefined,
+	oldPi = false,
+) {
+	const { ctx, opens, statuses, toolsExpandedChanges, tui, coverWithOtherOverlay } = makeFakeCtx(oldPi);
 	let copied: string | undefined;
 	let renders = 0;
 	let onCopy: (() => void) | undefined;
@@ -105,6 +139,7 @@ function makeController(model: CardModel | undefined, enrich?: Enrich, readFullO
 		hasLiveUI: (c) => (c as { mode: string }).mode === "tui",
 		getModel: () => model,
 		readFullOutput,
+		doneClosesOwnOverlay: !oldPi,
 		copyToClipboard: async (t: string) => {
 			copied = t;
 		},
@@ -130,6 +165,8 @@ function makeController(model: CardModel | undefined, enrich?: Enrich, readFullO
 	return {
 		controller,
 		opens,
+		tui,
+		coverWithOtherOverlay,
 		statuses,
 		toolsExpandedChanges,
 		getCopied: () => copied,
@@ -177,11 +214,13 @@ test("ModalController: opening a second modal swaps (closes the first)", async (
 	controller.openMemberModal("card", 0, 0);
 	controller.openMemberModal("card", 0, 0);
 	assert.equal(opens.length, 2);
-	assert.equal(await opens[0].settled, true, "first custom() settles on swap");
+	await flush();
+	assert.equal(opens[0].settled, true, "first custom() settles on swap");
 	// The first overlay's late settle must not clear the second one.
 	assert.equal(controller.isOpen(), true);
 	controller.closeModal();
-	assert.equal(await opens[1].settled, true);
+	await flush();
+	assert.equal(opens[1].settled, true);
 	assert.equal(controller.isOpen(), false);
 });
 
@@ -189,8 +228,48 @@ test("ModalController: closeModal settles the overlay and clears open state", as
 	const { controller, opens } = makeController(groupModel(fakeItem()));
 	controller.openMemberModal("card", 0, 0);
 	controller.closeModal();
-	assert.equal(await opens[0].settled, true);
+	await flush();
+	assert.equal(opens[0].settled, true);
 	assert.equal(controller.isOpen(), false);
+});
+
+test("ModalController: on older pi, a covered modal removes only its own overlay", async () => {
+	const { controller, opens, tui, coverWithOtherOverlay } = makeController(groupModel(fakeItem()), undefined, undefined, true);
+	controller.openMemberModal("card", 0, 0);
+	const other = coverWithOtherOverlay();
+	controller.closeModal();
+	await flush();
+	assert.deepEqual(tui.overlayStack, [other], "the other extension's dialog stays open");
+	assert.equal(controller.isOpen(), false);
+	// Its done() would have removed the other dialog, so this custom() stays open.
+	assert.equal(opens[0].settled, false);
+});
+
+test("ModalController: on older pi, an uncovered modal still closes through done()", async () => {
+	const { controller, opens, tui } = makeController(groupModel(fakeItem()), undefined, undefined, true);
+	controller.openMemberModal("card", 0, 0);
+	controller.openMemberModal("card", 0, 0);
+	controller.closeModal();
+	await flush();
+	assert.deepEqual(tui.overlayStack, []);
+	assert.deepEqual(opens.map((o) => o.settled), [true, true]);
+});
+
+test("ModalController: on pi ≥ 1.3, a covered modal closes through done() and leaves the cover", async () => {
+	const { controller, opens, tui, coverWithOtherOverlay } = makeController(groupModel(fakeItem()));
+	controller.openMemberModal("card", 0, 0);
+	const other = coverWithOtherOverlay();
+	controller.closeModal();
+	await flush();
+	assert.deepEqual(tui.overlayStack, [other]);
+	assert.equal(opens[0].settled, true);
+});
+
+test("doneClosesOwnOverlay: only pi 1.3.0 and later", () => {
+	assert.deepEqual(
+		["0.87.1", "1.2.0", "1.3.0", "1.10.2", "2.0.0", "", undefined].map(doneClosesOwnOverlay),
+		[false, false, true, true, true, false, false],
+	);
 });
 
 test("ModalController: a stale/out-of-range click opens nothing", () => {
@@ -235,7 +314,8 @@ test("ModalController: teardown closes an open modal", async () => {
 	const { controller, opens } = makeController(groupModel(fakeItem()));
 	controller.openMemberModal("card", 0, 0);
 	controller.teardown();
-	assert.equal(await opens[0].settled, true);
+	await flush();
+	assert.equal(opens[0].settled, true);
 	assert.equal(controller.isOpen(), false);
 });
 
@@ -262,6 +342,7 @@ test("copy feedback is contained to the modal: showCopied after the copy, clearC
 		getModel: () => groupModel(fakeItem()),
 		readFullOutput: () => undefined,
 		copyToClipboard: async () => {},
+		doneClosesOwnOverlay: true,
 		requestRender: () => {
 			renders++;
 		},

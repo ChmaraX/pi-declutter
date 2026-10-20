@@ -9,25 +9,36 @@ const ADAPTER = "thinking-experimental-update-content";
 type Method = (this: unknown, ...args: unknown[]) => unknown;
 type Target = { updateContent: Method; render?: Method; [REGISTRY]?: Map<string, unknown> };
 
-// Mirror Zentui's public-symbol registry contract, including its method-identity
-// ownership check. Replacing updateContent displaces the thinking renderer.
+// A Zentui-shaped fake of its public-symbol registry contract (pi-zentui 0.31):
+// - replacing updateContent displaces the thinking renderer (method identity);
+// - the wrapper calls the record's CURRENT predecessor, then matches pi's native
+//   layout, where a thinking/text message starts with a Spacer. A changed layout
+//   is Zentui's "renderer shape is incompatible", and it gives up.
 function installThinkingWrapper(target: object) {
 	const proto = target as Target;
 	const predecessor = proto.updateContent;
 	let calls = 0;
 	let displaced = false;
-	const wrapper: Method = function zentuiPrototypeWrapper(...args) {
+	let shapeFailed = false;
+	const record: { method: string; predecessor: Method; wrapper: Method } = { method: "updateContent", predecessor, wrapper: predecessor };
+	const wrapper: Method = function zentuiPrototypeWrapper(this: unknown, ...args) {
 		calls++;
 		if (proto.updateContent !== wrapper) displaced = true;
-		return Reflect.apply(predecessor, this, args);
+		const result = Reflect.apply(record.predecessor, this, args);
+		const content = (args[0] as { content?: { type: string }[] } | undefined)?.content ?? [];
+		const first = (this as { contentContainer?: { children?: unknown[] } }).contentContainer?.children?.[0];
+		const startsWithSpacer = (first as { constructor?: { name?: string } } | undefined)?.constructor?.name === "Spacer";
+		if (content.some((c) => c.type === "thinking" || c.type === "text") && !startsWithSpacer) shapeFailed = true;
+		return result;
 	};
-	const record = { method: "updateContent", predecessor, wrapper };
+	record.wrapper = wrapper;
 	proto.updateContent = wrapper;
 	proto[REGISTRY] = new Map([[ADAPTER, record]]);
 	return {
 		record,
 		get calls() { return calls; },
 		get displaced() { return displaced; },
+		get shapeFailed() { return shapeFailed; },
 		uninstall() {
 			if (proto.updateContent === wrapper) proto.updateContent = predecessor;
 			delete proto[REGISTRY];
@@ -86,6 +97,7 @@ test("Zentui: registered wrapper activates without displacing updateContent", (t
 	}
 	assert.equal(zentui.calls, 40);
 	assert.equal(zentui.displaced, false);
+	assert.equal(zentui.shapeFailed, false, "Zentui still sees pi's native layout");
 	patch.uninstall();
 	assert.equal(proto.render, originalRender);
 	assert.equal(proto.updateContent, zentui.record.wrapper);
@@ -143,10 +155,11 @@ test("Zentui: missing render target fails open", () => {
 	zentui.uninstall();
 });
 
-test("Zentui: later unknown updateContent is left untouched at render time", (t) => {
+test("Zentui: later unknown updateContent is left untouched at render time and reported", (t) => {
 	const { proto, instance } = makeTarget();
 	const zentui = installThinkingWrapper(proto);
-	const patch = installLeadingSpacerPatch({ prototype: proto as never });
+	const warnings: string[] = [];
+	const patch = installLeadingSpacerPatch({ prototype: proto as never, warn: (m) => warnings.push(m) });
 	t.after(() => { patch.uninstall(); zentui.uninstall(); });
 	assert.equal(patch.active, true);
 	instance.updateContent(THINKING);
@@ -154,6 +167,27 @@ test("Zentui: later unknown updateContent is left untouched at render time", (t)
 	proto.updateContent = function () {};
 	assert.deepEqual(instance.render(80), [""]);
 	assert.deepEqual(instance.contentContainer.children, children, "unknown renderer's actual Spacer must be left alone");
+	assert.equal(patch.degraded, true, "/activity-patch must not keep reporting active");
+	instance.render(80);
+	assert.equal(warnings.length, 1);
+});
+
+test("Zentui: cleanup resumes when Zentui owns updateContent again", (t) => {
+	const { proto, instance } = makeTarget();
+	const zentui = installThinkingWrapper(proto);
+	const warnings: string[] = [];
+	const patch = installLeadingSpacerPatch({ prototype: proto as never, warn: (m) => warnings.push(m) });
+	t.after(() => { patch.uninstall(); zentui.uninstall(); });
+	const zentuiUpdate = proto.updateContent;
+	instance.updateContent(THINKING);
+	proto.updateContent = function foreignWrapper(this: unknown, ...args) {
+		return Reflect.apply(zentuiUpdate, this, args);
+	};
+	assert.deepEqual(instance.render(80), [""], "paused while an unknown wrapper owns updateContent");
+	proto.updateContent = zentuiUpdate;
+	assert.deepEqual(instance.render(80), [], "the same message is cleaned on the next render");
+	assert.equal(patch.degraded, false);
+	assert.equal(warnings.length, 1);
 });
 
 test("Zentui: cleanup preserves a downstream render wrapper and can uninstall first", (t) => {
@@ -227,6 +261,7 @@ test("Zentui: real Pi renderer keeps thinking-only messages at zero rows and ans
 	const visible = new AssistantMessageComponent(THINKING as never);
 	assert.ok(visible.render(80).length > 0, "visible thinking must not be suppressed");
 	assert.equal(zentui.displaced, false);
+	assert.equal(zentui.shapeFailed, false, "Zentui still sees pi's native layout");
 });
 
 test("Zentui: an unchanged message is not re-measured on every frame", (t) => {
@@ -253,4 +288,5 @@ test("Zentui: an unchanged message is not re-measured on every frame", (t) => {
 	for (const n of counts.values()) assert.ok(n <= frames + 2, `child rendered ${n} times in ${frames} frames`);
 	component.updateContent(message as never);
 	assert.deepEqual(component.render(120), first, "a content change is cleaned up again");
+	assert.equal(zentui.shapeFailed, false);
 });

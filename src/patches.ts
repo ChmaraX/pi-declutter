@@ -145,6 +145,9 @@ export type PatchInactiveReason = "no-target" | "shape-drift" | "already-patched
 export interface LeadingSpacerPatch {
 	active: boolean;
 	reason?: PatchInactiveReason;
+	/** Installed, but cleanup is paused: the render-time guard found an
+	 * updateContent it does not recognise (another extension took over). */
+	readonly degraded?: boolean;
 	uninstall(): void;
 }
 
@@ -179,15 +182,20 @@ interface PatchTargetPrototype {
 // predecessor carries our existing Pi fingerprint. Unknown/stale wrappers must
 // continue to fail open; merely having a registry is not enough.
 const ZENTUI_PATCH_REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
+const ZENTUI_THINKING_ADAPTER = "thinking-experimental-update-content";
+
+/** A Zentui registry record, untrusted: every field is checked before use. */
+interface ZentuiPatchRecord {
+	method?: unknown;
+	wrapper?: unknown;
+	predecessor?: unknown;
+}
+
 function matchesRegisteredThinkingWrapper(proto: PatchTargetPrototype): boolean {
 	try {
-		const registry = (proto as PatchTargetPrototype & { [ZENTUI_PATCH_REGISTRY]?: unknown })[ZENTUI_PATCH_REGISTRY];
+		const registry: unknown = (proto as { [ZENTUI_PATCH_REGISTRY]?: unknown })[ZENTUI_PATCH_REGISTRY];
 		if (!(registry instanceof Map)) return false;
-		const record = registry.get("thinking-experimental-update-content") as {
-			method?: unknown;
-			wrapper?: unknown;
-			predecessor?: unknown;
-		} | undefined;
+		const record: ZentuiPatchRecord | undefined = registry.get(ZENTUI_THINKING_ADAPTER);
 		return (
 			record?.method === "updateContent" && record.wrapper === proto.updateContent &&
 			typeof record.predecessor === "function" && matchesLeadingSpacerShape(record.predecessor.toString())
@@ -195,6 +203,13 @@ function matchesRegisteredThinkingWrapper(proto: PatchTargetPrototype): boolean 
 	} catch {
 		return false;
 	}
+}
+
+/** True when `update` builds pi's native content tree: pi's own method, or
+ * Zentui's registered wrapper around it. The one guard for both patch paths. */
+function buildsNativeTree(proto: PatchTargetPrototype, update: unknown): boolean {
+	if (typeof update !== "function") return false;
+	return matchesLeadingSpacerShape(update.toString()) || (update === proto.updateContent && matchesRegisteredThinkingWrapper(proto));
 }
 
 /**
@@ -566,11 +581,11 @@ const SPACER_PROBE_WIDTH = 80;
  * (suppressedThinkingSpacersToRemove). Safe: only Spacers are ever removed, and
  * only those measured as pure blank. Returns the number of spacers removed.
  */
-export function stripSuppressedThinkingSpacers(instance: PatchTargetInstance, spacerClass?: Function): number {
+export function stripSuppressedThinkingSpacers(instance: PatchTargetInstance, spacerClass?: Function, width = SPACER_PROBE_WIDTH): number {
 	const container = instance?.contentContainer;
 	const children = container?.children;
 	if (!container || !Array.isArray(children) || children.length === 0) return 0;
-	const toRemove = suppressedThinkingSpacersToRemove(children, SPACER_PROBE_WIDTH, spacerClass);
+	const toRemove = suppressedThinkingSpacersToRemove(children, width, spacerClass);
 	for (const child of toRemove) container.removeChild(child);
 	return toRemove.length;
 }
@@ -594,8 +609,8 @@ const PATCH_MARKER = Symbol.for("pi-activity-feed.leadingSpacerPatch");
 type MarkedPrototype = PatchTargetPrototype & { [PATCH_MARKER]?: LeadingSpacerPatch };
 
 /** True when `current` holds exactly the children in `previous`, in order. */
-function sameChildren(previous: readonly unknown[] | undefined, current: readonly unknown[]): boolean {
-	return previous !== undefined && previous.length === current.length && previous.every((child, i) => child === current[i]);
+function sameChildren(previous: readonly unknown[], current: readonly unknown[]): boolean {
+	return previous.length === current.length && previous.every((child, i) => child === current[i]);
 }
 
 /**
@@ -617,7 +632,14 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 
 	const existing = proto[PATCH_MARKER];
 	if (existing?.active) {
-		return { active: true, reason: "already-patched", uninstall: existing.uninstall };
+		return {
+			active: true,
+			reason: "already-patched",
+			get degraded() {
+				return existing.degraded;
+			},
+			uninstall: existing.uninstall,
+		};
 	}
 
 	const original = proto.updateContent;
@@ -627,16 +649,16 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 	}
 	const directMatch = matchesLeadingSpacerShape(original.toString());
 	const originalRender = proto.render;
-	const renderCleanup = !directMatch && matchesRegisteredThinkingWrapper(proto) && typeof originalRender === "function";
+	const renderCleanup = !directMatch && buildsNativeTree(proto, original) && typeof originalRender === "function";
 	if (!directMatch && !renderCleanup) {
 		deps.warn?.("activity-feed: AssistantMessageComponent.updateContent shape drifted or has an unsupported wrapper — leading-spacer patch inactive (fail open); check /activity-patch and renderer extension compatibility.");
 		return { active: false, reason: "shape-drift", uninstall() {} };
 	}
 
 	const spacerClass = deps.spacerClass;
-	const strip = (instance: PatchTargetInstance) => {
+	const strip = (instance: PatchTargetInstance, width?: number) => {
 		try {
-			stripSuppressedThinkingSpacers(instance, spacerClass);
+			stripSuppressedThinkingSpacers(instance, spacerClass, width);
 		} catch {
 			// A cleanup fault must never break native message rendering.
 		}
@@ -651,19 +673,26 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 		return result;
 	};
 	// render runs every frame, but the content tree only changes on updateContent.
-	// The cleanup renders each child to measure it, which also evicts Markdown's
-	// one-width cache, so it runs (and rechecks the live guard) only when the
-	// children differ from the ones left after the last cleanup.
-	const cleaned = new WeakMap<object, unknown[]>();
+	// The cleanup renders each child to measure it, so it runs (and rechecks the
+	// live guard) only when the children, or the updateContent that built them,
+	// differ from the last check. It measures at the real width, so the render
+	// right after it reuses Markdown's one-width cache.
+	const checked = new WeakMap<object, { children: unknown[]; update: unknown }>();
+	let degraded = false;
+	let warnedDegraded = false;
 	const patchedRender = renderCleanup ? function (this: PatchTargetInstance, width: number, ...rest: unknown[]): string[] {
 		try {
 			const children = this.contentContainer?.children;
-			if (patch.active && Array.isArray(children) && !sameChildren(cleaned.get(this), children)) {
-				const update = proto.updateContent;
-				if (typeof update === "function" && (matchesLeadingSpacerShape(update.toString()) || matchesRegisteredThinkingWrapper(proto))) {
-					strip(this);
+			const update = proto.updateContent;
+			const last = checked.get(this);
+			if (patch.active && Array.isArray(children) && !(last !== undefined && last.update === update && sameChildren(last.children, children))) {
+				degraded = !buildsNativeTree(proto, update);
+				if (!degraded) strip(this, width);
+				else if (!warnedDegraded) {
+					warnedDegraded = true;
+					deps.warn?.("activity-feed: another extension replaced AssistantMessageComponent.updateContent — blank-line cleanup paused (fail open).");
 				}
-				cleaned.set(this, [...(this.contentContainer?.children ?? [])]);
+				checked.set(this, { children: [...(this.contentContainer?.children ?? [])], update });
 			}
 		} catch {
 			// Even a faulty third-party guard/registry must not prevent native render.
@@ -673,6 +702,9 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 
 	const patch: LeadingSpacerPatch = {
 		active: true,
+		get degraded() {
+			return degraded;
+		},
 		uninstall() {
 			if (!patch.active) return;
 			patch.active = false;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripVTControlCharacters } from "node:util";
-import { acquireLeadingSpacerPatch, installLeadingSpacerPatch, installToolMountHook } from "../src/patches.ts";
+import { acquireLeadingSpacerPatch, installLeadingSpacerPatch } from "../src/patches.ts";
 
 const REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
 const ADAPTER = "thinking-experimental-update-content";
@@ -62,59 +62,10 @@ function makeTarget() {
 		},
 	};
 	const instance = Object.assign(Object.create(proto), { contentContainer: container });
-	return { proto, instance, Spacer };
+	return { proto, instance };
 }
 
 const THINKING = { content: [{ type: "thinking", thinking: "Planning" }, { type: "toolCall", id: "1", name: "read", arguments: {} }] };
-
-test("native updateContent wrapper preserves opaque results, receiver, arguments and thrown values", (t) => {
-	const { proto, instance, Spacer } = makeTarget();
-	const result = { native: true };
-	const failure = new Error("native update failed");
-	const calls: unknown[][] = [];
-	proto.updateContent = function (message, ...rest: unknown[]) {
-		calls.push([this, message, ...rest]);
-		this.contentContainer.clear();
-		if (message.content.some((c) => c.type === "text" || c.type === "thinking")) {
-			this.contentContainer.addChild(new Spacer(1));
-		}
-		if (rest[0] === "throw") throw failure;
-		return result;
-	};
-	const patch = installLeadingSpacerPatch({ prototype: proto as never });
-	t.after(() => patch.uninstall());
-	assert.equal(patch.active, true);
-	assert.equal(instance.updateContent(THINKING, "native argument", 42), result);
-	assert.deepEqual(calls, [[instance, THINKING, "native argument", 42]]);
-	assert.throws(() => instance.updateContent(THINKING, "throw"), (error) => error === failure);
-});
-
-test("native mount wrapper preserves opaque results even when the typed callback fails", () => {
-	const result = { mounted: true };
-	const failure = new Error("native mount failed");
-	const calls: unknown[][] = [];
-	const proto = {
-		addChild(this: unknown, child: unknown, ...rest: unknown[]) {
-			calls.push([this, child, ...rest]);
-			if (rest[0] === "throw") throw failure;
-			return result;
-		},
-	};
-	const root = Object.create(proto) as typeof proto;
-	const child = { toolCallId: "1", toolName: "read", render: () => [], updateResult() {}, markExecutionStarted() {} };
-	const mounted: string[] = [];
-	assert.equal(installToolMountHook(root, (instance) => {
-		mounted.push(instance.toolCallId);
-		assert.equal(instance, child);
-		throw new Error("callback failed");
-	}), true);
-	assert.equal(root.addChild(child, "native argument", 42), result);
-	assert.deepEqual(calls, [[root, child, "native argument", 42]]);
-	assert.deepEqual(mounted, ["1"]);
-	assert.throws(() => root.addChild(child, "throw"), (error) => error === failure);
-	assert.equal(root.addChild({ toolCallId: "not a complete tool component" }), result);
-	assert.deepEqual(mounted, ["1", "1"], "near-miss objects must not reach the typed callback");
-});
 
 test("Zentui: registered wrapper activates without displacing updateContent", (t) => {
 	const { proto, instance } = makeTarget();

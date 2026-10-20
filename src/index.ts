@@ -104,7 +104,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { copyToClipboard, getLanguageFromPath, highlightCode, renderDiff } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, getLanguageFromPath, highlightCode, renderDiff, VERSION } from "@earendil-works/pi-coding-agent";
 import {
 	Box,
 	type Component,
@@ -163,7 +163,7 @@ import { bodyKindOf, bucketCountsText, isCommandTool, isPreviewTool } from "./la
 import { type RichBodyDeps, withStyledBody } from "./modal-body.ts";
 
 import { OutputModal } from "./modal-view.ts";
-import { ModalController } from "./modal-controller.ts";
+import { doneClosesOwnOverlay, ModalController } from "./modal-controller.ts";
 import { buildCardEntries, settleAction, type ToolCall, toCallLike } from "./card-build.ts";
 import {
 	ActivityCard,
@@ -857,8 +857,8 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	// ── Floating output modal ─────────────────────────────────────────────────────
 	// Clicking a member/thought row opens a focused overlay (ctx.ui.custom overlay)
 	// showing the FULL output/thinking text, scrollable and copyable. Only one modal at a time: opening another closes the
-	// current one first (handle.hide()), then shows the new content. The handle is
-	// also hidden on teardown / settle-abort so no overlay outlives its card.
+	// current one first (through its done()), then shows the new content. It is
+	// also closed on teardown / settle-abort so no overlay outlives its card.
 	// Modal lifecycle (open/swap/copy/close/teardown) is owned by ModalController;
 	// it reads the live model + UI context through injected accessors.
 	const modalController = new ModalController({
@@ -867,6 +867,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		getModel: (cardId) => view.models.get(cardId),
 		readFullOutput,
 		copyToClipboard,
+		doneClosesOwnOverlay: doneClosesOwnOverlay(VERSION),
 		requestRender: () => runtime.tui?.requestRender(),
 		makeModal: (content, theme, done, onCopy, matchesToolsExpand, onToolsExpand) =>
 			new OutputModal(content, theme as Theme, done, onCopy, matchesToolsExpand, onToolsExpand),

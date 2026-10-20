@@ -90,11 +90,16 @@
  * The predicate, walk, and shape matcher are pure and dependency-free (no pi
  * imports — the root, prototype, and Spacer identity are all resolved at runtime
  * from the live tree), so they are unit-testable with plain objects
- * (test/patches.test.ts). test/patches-zentui.test.ts also checks the REAL shipped
- * component with a registered thinking wrapper (40×[thinking,tool] → 0 rows).
- * Run `npm test` after Pi/extension updates to check spacing and fail-open
- * regressions. Live-bundle activation is separately checkable with the
- * `/activity-patch` command.
+ * (test/patches.test.ts) and the blank-probe drift canary can drive them against
+ * the REAL component (prototypes/blank-probe/patch-probe.mjs).
+ * test/patches-zentui.test.ts covers the same cleanup through Zentui's registered
+ * thinking wrapper on the real shipped component.
+ *
+ * ⚠️ Run `node prototypes/blank-probe/patch-probe.mjs` after ANY pi/extension
+ * update: it asserts the patched blank counts (40×[thinking,tool] → 0 blanks) AND
+ * that the guard deactivates on simulated shape drift. If it reports shape-drift,
+ * the fingerprint below needs re-checking against the new pi source. Live-bundle
+ * activation is separately checkable with the `/activity-patch` command.
  */
 
 /** Minimal shape of a raw assistant message content block we inspect. */
@@ -588,6 +593,11 @@ const PATCH_MARKER = Symbol.for("pi-activity-feed.leadingSpacerPatch");
 
 type MarkedPrototype = PatchTargetPrototype & { [PATCH_MARKER]?: LeadingSpacerPatch };
 
+/** True when `current` holds exactly the children in `previous`, in order. */
+function sameChildren(previous: readonly unknown[] | undefined, current: readonly unknown[]): boolean {
+	return previous !== undefined && previous.length === current.length && previous.every((child, i) => child === current[i]);
+}
+
 /**
  * Install the guarded leading-Spacer patch on a LIVE prototype.
  * Feature-detects the pi 0.85.1 `updateContent` shape and, on match, wraps it so a
@@ -599,7 +609,8 @@ type MarkedPrototype = PatchTargetPrototype & { [PATCH_MARKER]?: LeadingSpacerPa
  * by accepting an arbitrary wrapper source. In that case clean up just before
  * `render` instead: Zentui checks updateContent identity to retain ownership, so
  * wrapping it would silently displace its renderer. The render path rechecks the
- * live updateContent guard on each call and never edits an unknown render tree.
+ * live updateContent guard whenever a message's children change and never edits
+ * an unknown render tree.
  */
 export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): LeadingSpacerPatch {
 	const proto = deps.prototype as MarkedPrototype;
@@ -631,18 +642,28 @@ export function installLeadingSpacerPatch(deps: LeadingSpacerPatchDeps): Leading
 		}
 	};
 	const patched = function (this: PatchTargetInstance, message: { content?: unknown }, ...rest: unknown[]): unknown {
-		// Let Pi build its tree unchanged, then remove only dead blank spacers.
+		// Always let pi build the content tree first (unchanged behavior), then
+		// remove the dead blank spacers bordering any thinking run we suppressed —
+		// leading AND trailing, on any message shape, while keeping the
+		// single paragraph margin real text needs.
 		const result = original.apply(this, [message, ...rest]);
 		if (patch.active) strip(this);
 		return result;
 	};
-	const patchedRender = typeof originalRender === "function" ? function (this: PatchTargetInstance, width: number, ...rest: unknown[]): string[] {
+	// render runs every frame, but the content tree only changes on updateContent.
+	// The cleanup renders each child to measure it, which also evicts Markdown's
+	// one-width cache, so it runs (and rechecks the live guard) only when the
+	// children differ from the ones left after the last cleanup.
+	const cleaned = new WeakMap<object, unknown[]>();
+	const patchedRender = renderCleanup ? function (this: PatchTargetInstance, width: number, ...rest: unknown[]): string[] {
 		try {
-			if (
-				patch.active && typeof proto.updateContent === "function" &&
-				(matchesLeadingSpacerShape(proto.updateContent.toString()) || matchesRegisteredThinkingWrapper(proto))
-			) {
-				strip(this);
+			const children = this.contentContainer?.children;
+			if (patch.active && Array.isArray(children) && !sameChildren(cleaned.get(this), children)) {
+				const update = proto.updateContent;
+				if (typeof update === "function" && (matchesLeadingSpacerShape(update.toString()) || matchesRegisteredThinkingWrapper(proto))) {
+					strip(this);
+				}
+				cleaned.set(this, [...(this.contentContainer?.children ?? [])]);
 			}
 		} catch {
 			// Even a faulty third-party guard/registry must not prevent native render.

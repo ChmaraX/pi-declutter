@@ -228,3 +228,29 @@ test("Zentui: real Pi renderer keeps thinking-only messages at zero rows and ans
 	assert.ok(visible.render(80).length > 0, "visible thinking must not be suppressed");
 	assert.equal(zentui.displaced, false);
 });
+
+test("Zentui: an unchanged message is not re-measured on every frame", (t) => {
+	initTheme("dark", false);
+	const proto = AssistantMessageComponent.prototype;
+	const zentui = installThinkingWrapper(proto);
+	const patch = installLeadingSpacerPatch({ prototype: proto as never });
+	t.after(() => { patch.uninstall(); zentui.uninstall(); });
+	assert.equal(patch.active, true);
+	const message = { ...THINKING, content: [THINKING.content[0], { type: "text", text: "Answer with **markdown**" }] };
+	const component = new AssistantMessageComponent(
+		message as never, false, undefined, "", 1,
+		[(text, ctx) => ctx.messageType === "assistant-thinking" ? "" : text],
+	);
+	const frames = 30;
+	const counts = new Map<object, number>();
+	for (const child of (component as unknown as { contentContainer: { children: { render(w: number): string[] }[] } }).contentContainer.children) {
+		const render = child.render.bind(child);
+		child.render = (width) => { counts.set(child, (counts.get(child) ?? 0) + 1); return render(width); };
+	}
+	const first = component.render(120);
+	for (let i = 1; i < frames; i++) assert.deepEqual(component.render(120), first);
+	// One frame each, plus the single cleanup pass after the content changed.
+	for (const n of counts.values()) assert.ok(n <= frames + 2, `child rendered ${n} times in ${frames} frames`);
+	component.updateContent(message as never);
+	assert.deepEqual(component.render(120), first, "a content change is cleaned up again");
+});

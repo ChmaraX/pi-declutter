@@ -17,7 +17,7 @@
  */
 
 import type { TUI, TuiMainScreenRenderState, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets } from "./mouse.ts";
+import { isSgrLeftPress, isSgrMotion, type MousePacket, parseSgrMousePackets, sgrWheelDirection } from "./mouse.ts";
 
 // SGR button tracking (1000) + ANY-MOTION tracking (1003) + SGR extended
 // coordinates (1006). Hover needs motion reports WITHOUT a button held, so
@@ -35,8 +35,9 @@ export const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1003l\x1b[?1006l";
 export type RegularTui = TUI & { captureRenderState?: () => TuiMainScreenRenderState };
 
 // Protected on the TUI base class; hit-tests the rendered overlays in
-// viewport coordinates (and carries the click-away close patch).
-type OverlayDispatch = (event: TuiMouseEvent) => { hit: boolean } | undefined;
+// viewport coordinates (and carries the click-away close patch). `result` is
+// set when the overlay component handled the event.
+type OverlayDispatch = (event: TuiMouseEvent) => { hit: boolean; result?: unknown } | undefined;
 
 /** A live TUI handle holder — the same `runtime` object the capture widget fills. */
 export interface MouseRuntime {
@@ -54,8 +55,8 @@ export interface MouseControllerDeps {
 	/** Clear any hover highlight — called on teardown so a finalized/torn-down
 	 * session never keeps a stale row lit. */
 	clearHover(): void;
-	/** True while the floating modal is open: presses then go to the overlay
-	 * layer instead of the cards underneath. */
+	/** True while the floating modal is open: presses and wheel scrolls then go
+	 * to the overlay layer instead of the cards underneath. */
 	isModalOpen?(): boolean;
 }
 
@@ -136,11 +137,16 @@ export class MouseController {
 		let toggled = false;
 		let lastMotion: MousePacket | undefined;
 		for (const packet of parsed.packets) {
+			const wheel = sgrWheelDirection(packet);
 			if (isSgrLeftPress(packet)) {
 				if (this.deps.isModalOpen?.()) {
-					this.dispatchPressToOverlay(tui, packet);
+					this.dispatchToOverlay(tui, packet, "press");
 					toggled = true;
 				} else if (this.resolveClickToCard(tui, packet)) toggled = true;
+			} else if (wheel !== undefined) {
+				// A wheel over the open modal scrolls its body, as fullscreen routes it
+				// natively. Elsewhere the wheel is consumed like before.
+				if (this.deps.isModalOpen?.() && this.dispatchToOverlay(tui, packet, "wheel", wheel)) toggled = true;
 			} else if (isSgrMotion(packet)) {
 				// Only the FINAL motion position matters for hover: a fast 1003 burst
 				// packs many motions per chunk, but resolving every one would dispatch
@@ -224,16 +230,22 @@ export class MouseController {
 		return Boolean(handleMouse.call(tui, event));
 	}
 
-	/** Route a press through the overlay layer, as fullscreen does natively, so
-	 * a press outside the modal reaches the click-away close. */
-	private dispatchPressToOverlay(tui: RegularTui, packet: MousePacket): void {
+	/** Route a press or wheel through the overlay layer, as fullscreen does
+	 * natively: a press outside the modal reaches the click-away close, and a
+	 * wheel inside it scrolls the body. True when an overlay handled the event. */
+	private dispatchToOverlay(
+		tui: RegularTui,
+		packet: MousePacket,
+		type: "press" | "wheel",
+		wheelDelta?: number,
+	): boolean {
 		const dispatch = (tui as unknown as { dispatchMouseToOverlay?: OverlayDispatch }).dispatchMouseToOverlay;
-		if (typeof dispatch !== "function") return;
+		if (typeof dispatch !== "function") return false;
 		const x = Math.max(0, packet.col - 1);
 		const y = Math.max(0, packet.row - 1);
-		dispatch.call(tui, {
-			type: "press",
-			button: "left",
+		const out = dispatch.call(tui, {
+			type,
+			button: type === "press" ? "left" : "none",
 			x,
 			y,
 			screenX: x,
@@ -243,7 +255,8 @@ export class MouseController {
 			shift: (packet.code & 4) !== 0,
 			alt: (packet.code & 8) !== 0,
 			ctrl: (packet.code & 16) !== 0,
-			clickCount: 1,
+			...(type === "press" ? { clickCount: 1 } : { wheelDelta }),
 		});
+		return out?.result !== undefined;
 	}
 }

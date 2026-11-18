@@ -204,6 +204,57 @@ test("handleTerminalInput: with the modal open, a press goes to the overlay laye
 	assert.equal(tui.renders, 1);
 });
 
+function makeOverlayTui(overlayResult: { hit: boolean; result?: unknown }) {
+	const overlayEvents: Array<Record<string, unknown>> = [];
+	let cardDispatched = false;
+	const tui = makeFakeTui({
+		handleMouse: () => {
+			cardDispatched = true;
+			return { handled: true, render: true };
+		},
+	});
+	(tui as unknown as { dispatchMouseToOverlay: (e: Record<string, unknown>) => unknown }).dispatchMouseToOverlay = (e) => {
+		overlayEvents.push(e);
+		return overlayResult;
+	};
+	return { tui, overlayEvents, cardDispatched: () => cardDispatched };
+}
+
+test("handleTerminalInput: with the modal open, a wheel goes to the overlay and repaints when it scrolls", () => {
+	const { tui, overlayEvents, cardDispatched } = makeOverlayTui({ hit: true, result: { handled: true } });
+	const runtime: MouseRuntime = { tui: tui as never };
+	const controller = new MouseController({ runtime, ...makeHoverSpy(), isModalOpen: () => true });
+	assert.deepEqual(controller.handleTerminalInput("\x1b[<65;5;3M\x1b[<64;6;4M"), { consume: true });
+	assert.equal(cardDispatched(), false);
+	assert.deepEqual(
+		overlayEvents.map((e) => [e.type, e.button, e.wheelDelta, e.screenX, e.screenY]),
+		[
+			["wheel", "none", 1, 4, 2],
+			["wheel", "none", -1, 5, 3],
+		],
+	);
+	assert.equal(tui.renders, 1);
+});
+
+test("handleTerminalInput: a wheel outside the modal is consumed without a repaint", () => {
+	const { tui, overlayEvents } = makeOverlayTui({ hit: false });
+	const runtime: MouseRuntime = { tui: tui as never };
+	const controller = new MouseController({ runtime, ...makeHoverSpy(), isModalOpen: () => true });
+	assert.deepEqual(controller.handleTerminalInput("\x1b[<65;1;1M"), { consume: true });
+	assert.equal(overlayEvents.length, 1);
+	assert.equal(tui.renders, 0);
+});
+
+test("handleTerminalInput: with no modal open, a wheel is consumed and never reaches the overlay", () => {
+	const { tui, overlayEvents, cardDispatched } = makeOverlayTui({ hit: true, result: { handled: true } });
+	const runtime: MouseRuntime = { tui: tui as never };
+	const controller = new MouseController({ runtime, ...makeHoverSpy(), isModalOpen: () => false });
+	assert.deepEqual(controller.handleTerminalInput("\x1b[<65;5;3M"), { consume: true });
+	assert.equal(overlayEvents.length, 0);
+	assert.equal(cardDispatched(), false);
+	assert.equal(tui.renders, 0);
+});
+
 test("handleTerminalInput: a motion packet resolves hover without requiring a left press", () => {
 	const tui = makeFakeTui({
 		handleMouse: () => undefined, // no card under the cursor

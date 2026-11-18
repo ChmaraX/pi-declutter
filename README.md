@@ -48,7 +48,7 @@ In an open row:
 
 | Key | Action |
 | --- | --- |
-| `↑` `↓` `PgUp` `PgDn` `Home` `End` | Scroll |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End`, or mouse wheel over the row | Scroll |
 | `c` | Copy the plain text |
 | `Esc` `q` or click outside | Close |
 

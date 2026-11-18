@@ -97,6 +97,16 @@ export function isSgrLeftPress(packet: MousePacket): boolean {
 	return packet.final === "M" && isSgrLeftButton(packet.code) && (packet.code & 32) === 0;
 }
 
+/** Scroll direction of a wheel report (bit 64 set, low bits 0 = up, 1 =
+ * down): -1 up, 1 down, undefined for any other packet. */
+export function sgrWheelDirection(packet: MousePacket): -1 | 1 | undefined {
+	if ((packet.code & 64) === 0 || packet.final !== "M") return undefined;
+	const button = packet.code & 3;
+	if (button === 0) return -1;
+	if (button === 1) return 1;
+	return undefined;
+}
+
 /** A motion report (any-motion 1003 sets bit 32). Covers both no-button hover
  * (code 35) and button-held drag motion — both update hover. */
 export function isSgrMotion(packet: MousePacket): boolean {

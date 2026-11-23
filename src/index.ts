@@ -37,8 +37,8 @@
  *     trailing live thought entry "⟳ Thinking… · Xs ▸" at its chronological position
  *     (closing the open group), ticked by the live timer; at thinking_end the SAME
  *     entry (stable node id) transforms in place to "· Thought Ns · <summary> ▸",
- *     and when expanded mid-stream its box shows the live text tail (thinkingBuf
- *     referenced live, copied to a bounded tail only at close). Native thinking
+ *     and when expanded mid-stream its box shows the live text tail (the ThinkingCapture
+ *     buffer referenced live, copied to a bounded tail only at close). Native thinking
  *     rendering is suppressed with supported levers only
  *     — a markdown transformer that blanks "assistant-thinking" (streaming +
  *     settled) plus setHiddenThinkingLabel("") for the ctrl+t-hidden placeholder
@@ -143,6 +143,7 @@ import {
 } from "./card-model.ts";
 import { Grouper, shouldTick } from "./grouping.ts";
 import { classifyThinkingSpan } from "./span-classify.ts";
+import { ThinkingCapture } from "./thinking-capture.ts";
 import {
 	acquireToolRowHidePatch,
 	collectToolExecutionIds,
@@ -204,10 +205,6 @@ const LIVE_TICK_MS = 500;
 // constants) live in card-view.ts alongside ActivityCard, which is the only
 // code that renders the Box they describe; onCardMouse below imports
 // CARD_BOX_PADDING_Y for its own y-offset math.
-// Per-thinking-span capture cap: ~2KB is enough for the summary line
-// plus a 10-line tail box; anything beyond is dropped (bounded retention, like
-// the tool-output previews).
-const THINKING_BUF_MAX = 2048;
 // Per-call full-output capture cap for the modal: the modal shows the whole
 // output, but stored capture stays bounded at 64KB. Larger truncated command output lives in a temp file (fullOutputPath)
 // read lazily on open, so this cap only bounds in-memory retention.
@@ -453,11 +450,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	/** Anchored on the FIRST turn_start of the response; 0 until that fires. */
 	let responseStartMs = 0;
 	let runningTools = 0;
-	let thinkingStartMs: number | undefined;
-	// Text streamed for the CURRENT thinking span, bounded to ~2KB:
-	// enough for a summary line + a 10-line tail box, negligible retention. Reset
-	// on thinking_start, flushed into the group on thinking_end.
-	let thinkingBuf = "";
+	// The CURRENT thinking span (timed + bounded text). Opened on thinking_start,
+	// flushed into the grouper on thinking_end.
+	const thinking = new ThinkingCapture();
 	// Monotonic id source for synthetic calls reconstructed from thinking-channel
 	// tool dumps (span-classify.ts) — they have no provider toolCallId.
 	let syntheticCallSeq = 0;
@@ -576,8 +571,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		grouper.reset();
 		responseStartMs = 0;
 		runningTools = 0;
-		thinkingStartMs = undefined;
-		thinkingBuf = "";
+		thinking.reset();
 		cardModel = undefined;
 		cardAppended = false;
 		// A pending narration from the PREVIOUS response is moot for a fresh one
@@ -588,7 +582,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 
 	/**
 	 * Flush an OPEN thinking span into the grouper. On a normal
-	 * settle thinking_end already fired, so thinkingStartMs is undefined and this is
+	 * settle thinking_end already fired, so no span is open and this is
 	 * a no-op. On an abnormal end the stream died mid-thinking (no thinking_end), so
 	 * the in-progress span is captured here — its elapsed time + the partial streamed
 	 * buffer — so the interrupted card's thought entry closes with a real duration and
@@ -597,10 +591,9 @@ export default function activityFeed(pi: ExtensionAPI): void {
 	 * above that threshold).
 	 */
 	function flushOpenThinking(): void {
-		if (thinkingStartMs === undefined) return;
-		grouper.addThought(Date.now() - thinkingStartMs, thinkingBuf);
-		thinkingStartMs = undefined;
-		thinkingBuf = "";
+		if (!thinking.active) return;
+		const span = thinking.end(Date.now());
+		grouper.addThought(span.ms, span.text);
 	}
 
 	/** Force-settle the current card as INTERRUPTED if it is still live.
@@ -706,27 +699,12 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		if (id) view.models.set(id, model);
 	}
 
-	/** The in-progress thinking span for the live card: elapsed ms +
-	 * the current streamed buffer. Undefined when no thinking span is active. The
-	 * buffer is passed by reference each tick (never retained by the grouper); the
-	 * card copies only a bounded tail. */
-	function liveThinking(): { ms: number; text: string } | undefined {
-		if (thinkingStartMs === undefined) return undefined;
-		return { ms: Date.now() - thinkingStartMs, text: thinkingBuf };
-	}
-
-	/** True while a thinking span is streaming (drives the tick condition + the
-	 * live thought row). */
-	function thinkingActive(): boolean {
-		return thinkingStartMs !== undefined;
-	}
-
 	function refreshLive(): void {
 		// The snapshot exposes the open group at the tail AND a
 		// suprathreshold in-progress thinking run as a trailing live thought entry.
 		// Passing the live span lets that entry appear/tick before the
 		// span closes; buildCardEntries marks it live so its row shows "Thinking… · Xs".
-		const live = liveThinking();
+		const live = thinking.live(Date.now());
 		const snapshot = grouper.snapshot(live);
 		// Append the card as soon as there is live content — the first tool's open
 		// group OR a suprathreshold thinking run — so it sits above the
@@ -1288,8 +1266,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 			case "thinking_start":
 				// New thinking starting is proof anything pending was not the final answer.
 				narrationController.confirmNonFinal();
-				thinkingStartMs = Date.now();
-				thinkingBuf = "";
+				thinking.start(Date.now());
 				// Tick while the span streams so the live thought entry can appear at
 				// MIN_THOUGHT_MS and its timer/tail refresh. No-ops in print
 				// mode (startTimer guards on uiCtx). If tools are running the timer is
@@ -1301,20 +1278,17 @@ export default function activityFeed(pi: ExtensionAPI): void {
 				// Providers that stream reasoning text (Anthropic) or summary titles
 				// (OpenAI Responses) both deliver it here; a span with no text keeps an
 				// empty buffer and its row degrades to a bare "· Thought Ns".
-				if (thinkingBuf.length < THINKING_BUF_MAX) {
-					thinkingBuf += (ame as { delta?: string }).delta ?? "";
-					if (thinkingBuf.length > THINKING_BUF_MAX) thinkingBuf = thinkingBuf.slice(0, THINKING_BUF_MAX);
-				}
+				thinking.append((ame as { delta?: string }).delta ?? "");
 				break;
 			case "thinking_end": {
-				const ms = thinkingStartMs ? Date.now() - thinkingStartMs : 0;
+				const { ms, text } = thinking.end(Date.now());
 				// Provider-stream normalization (span-classify.ts): some
 				// providers (Cursor) stream TOOL ACTIVITY through the thinking channel —
 				// "$ grep …", "read /path", "Cursor shell: <cmd>" dumps with output, no
 				// real tool events at all. A span classified as a tool step becomes a
 				// synthetic settled call (a proper card member with the dump as its modal
 				// output) instead of polluting/overwriting the Thought entry.
-				const cls = classifyThinkingSpan(thinkingBuf);
+				const cls = classifyThinkingSpan(text);
 				if (cls.kind === "tool") {
 					syntheticCallSeq += 1;
 					grouper.addCall({
@@ -1323,20 +1297,18 @@ export default function activityFeed(pi: ExtensionAPI): void {
 						arguments: {},
 						startMs: Date.now() - ms,
 						endMs: Date.now(),
-						fullOutput: thinkingBuf.slice(0, MAX_MODAL_CAPTURE),
+						fullOutput: text.slice(0, MAX_MODAL_CAPTURE),
 						labelOverride: cls.label,
 					});
 				} else {
 					// Copy the buffer into the span AT CLOSE (bounded retention): the
-					// live box referenced thinkingBuf each tick; here the span freezes to it.
-					grouper.addThought(ms, thinkingBuf);
+					// live box referenced the capture buffer each tick; here the span freezes to it.
+					grouper.addThought(ms, text);
 				}
-				thinkingStartMs = undefined;
-				thinkingBuf = "";
 				// Transform the live "Thinking…" row to its settled "Thought Ns" form in
 				// place, then stop ticking if neither tools nor thinking remain active.
 				refreshLive();
-				if (!shouldTick(runningTools, thinkingActive())) stopTimer();
+				if (!shouldTick(runningTools, thinking.active)) stopTimer();
 				break;
 			}
 			case "text_start":
@@ -1438,7 +1410,7 @@ export default function activityFeed(pi: ExtensionAPI): void {
 		// ends the ticking once the last tool of the batch settles. The timer also
 		// stays alive if a thinking span is streaming — shouldTick().
 		refreshLive();
-		if (!shouldTick(runningTools, thinkingActive())) stopTimer();
+		if (!shouldTick(runningTools, thinking.active)) stopTimer();
 	});
 
 	// tool_result carries the TYPED details, incl. bash/powershell

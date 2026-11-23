@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ChmaraX/pi-declutter/compare/v0.2.2...v0.3.0) (2026-11-23)
+
+
+### Features
+
+* scroll the modal with the mouse wheel ([#7](https://github.com/ChmaraX/pi-declutter/issues/7)) ([779ab1c](https://github.com/ChmaraX/pi-declutter/commit/779ab1c708b9086e581bed8185404bda9423792e))
+
 ## [0.2.2](https://github.com/ChmaraX/pi-declutter/compare/v0.2.1...v0.2.2) (2026-10-20)
 
 

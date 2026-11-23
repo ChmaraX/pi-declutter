@@ -18,6 +18,7 @@ import { test } from "node:test";
 import {
 	isSgrLeftPress,
 	isSgrMotion,
+	sgrWheelDirection,
 	type MousePacket,
 	parseSgrMousePackets,
 	SGR_RESIDUAL_MAX,
@@ -163,4 +164,13 @@ test("isSgrMotion is true exactly when the motion bit (32) is set", () => {
 	assert.equal(isSgrMotion({ code: 35, col: 1, row: 1, final: "M" }), true); // 1003 hover
 	assert.equal(isSgrMotion({ code: 32, col: 1, row: 1, final: "M" }), true); // drag motion
 	assert.equal(isSgrMotion({ code: 0, col: 1, row: 1, final: "M" }), false); // press
+});
+
+test("sgrWheelDirection reads wheel up/down and ignores every other packet", () => {
+	assert.equal(sgrWheelDirection({ code: 64, col: 1, row: 1, final: "M" }), -1); // wheel up
+	assert.equal(sgrWheelDirection({ code: 65, col: 1, row: 1, final: "M" }), 1); // wheel down
+	assert.equal(sgrWheelDirection({ code: 73, col: 1, row: 1, final: "M" }), 1); // alt + wheel down
+	assert.equal(sgrWheelDirection({ code: 66, col: 1, row: 1, final: "M" }), undefined); // wheel left
+	assert.equal(sgrWheelDirection({ code: 0, col: 1, row: 1, final: "M" }), undefined); // press
+	assert.equal(sgrWheelDirection({ code: 35, col: 1, row: 1, final: "M" }), undefined); // motion
 });

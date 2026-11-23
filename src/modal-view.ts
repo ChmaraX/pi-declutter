@@ -3,13 +3,23 @@
 // ctx.ui.custom({overlay:true}); the TUI gives it keyboard focus and calls
 // handleInput. Bordered and full-height: title bar (label + duration + badge
 // / thought summary), a scroll window over the body, and a footer hint line.
-// `c` copies the untruncated raw text; ↑/↓/PgUp/PgDn/Home/End scroll; Esc closes.
+// `c` copies the untruncated raw text; ↑/↓/PgUp/PgDn/Home/End and the mouse
+// wheel scroll; Esc closes.
 //
 // Pure of any activityFeed() closure state: the content, theme, and the
 // done/copy callbacks are all injected by the ModalController that owns it.
 
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import { type Focusable, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+	type Focusable,
+	Markdown,
+	matchesKey,
+	truncateToWidth,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import type { Tone } from "./card-shape.ts";
 import {
 	clampScrollTop,
@@ -158,15 +168,26 @@ export class OutputModal implements Focusable {
 		}
 		const total = this.bodyRows(this.lastInnerContentWidth).length;
 		const page = Math.max(1, this.lastViewport - 1);
-		if (matchesKey(data, "up")) this.top -= 1;
-		else if (matchesKey(data, "down")) this.top += 1;
-		else if (matchesKey(data, "pageUp")) this.top -= page;
-		else if (matchesKey(data, "pageDown")) this.top += page;
-		else if (matchesKey(data, "home")) this.top = 0;
-		else if (matchesKey(data, "end")) this.top = total;
-		else return;
-		// Clamp against the last render's viewport; re-clamped precisely in render().
-		this.top = clampScrollTop(this.top, total, this.lastViewport);
+		if (matchesKey(data, "up")) this.scrollTo(this.top - 1);
+		else if (matchesKey(data, "down")) this.scrollTo(this.top + 1);
+		else if (matchesKey(data, "pageUp")) this.scrollTo(this.top - page);
+		else if (matchesKey(data, "pageDown")) this.scrollTo(this.top + page);
+		else if (matchesKey(data, "home")) this.scrollTo(0);
+		else if (matchesKey(data, "end")) this.scrollTo(total);
+	}
+
+	/** The wheel scrolls the body while the pointer is over the modal. Other
+	 * mouse events fall through (a press outside reaches the click-away close). */
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+		this.scrollTo(this.top + event.wheelDelta);
+		return { handled: true };
+	}
+
+	/** Clamp against the last render's viewport; re-clamped precisely in render(). */
+	private scrollTo(top: number): void {
+		const total = this.bodyRows(this.lastInnerContentWidth).length;
+		this.top = clampScrollTop(top, total, this.lastViewport);
 	}
 
 	render(width: number): string[] {
